@@ -1,0 +1,77 @@
+{
+  "name": "@erennyuksell/ubl-tr",
+  "version": "0.1.0",
+  "description": "TypeScript utilities for building and parsing Turkish UBL-TR e-invoice documents.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Eren Yuksell",
+    "url": "https://github.com/erennyuksell"
+  },
+  "homepage": "https://github.com/erennyuksell/ubl-tr#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/erennyuksell/ubl-tr.git"
+  },
+  "bugs": {
+    "url": "https://github.com/erennyuksell/ubl-tr/issues"
+  },
+  "keywords": [
+    "ubl",
+    "ubl-tr",
+    "e-invoice",
+    "e-fatura",
+    "e-arsiv",
+    "turkey",
+    "gib",
+    "typescript"
+  ],
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.4.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/node": "^25.0.0",
+    "eslint": "^9.39.2",
+    "prettier": "^3.7.4",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "typescript-eslint": "^8.50.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

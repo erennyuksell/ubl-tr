@@ -348,9 +348,22 @@ export interface UblInvoiceDocument extends UblElement {
   InvoiceLine: UblElement[];
 }
 
-export interface UblBuildOptions {
-  validate?: boolean;
+export interface UblValidationOptions {
   tolerance?: number;
+  /**
+   * The invoice number (cbc:ID) is assigned by the e-document provider rather than the caller.
+   *
+   * Turkish e-invoice providers (Uyumsoft among them) allocate the number from a registered
+   * series when the submitted ID is blank, or from a specific series when a 3-character prefix
+   * is submitted. With this flag set, a blank `invoiceNo` is accepted and passes through to
+   * `cbc:ID` untouched. Leave it off when building a standalone UBL-TR document, where GİB
+   * requires a fully-formed 16-character number.
+   */
+  providerAssignedInvoiceNo?: boolean;
+}
+
+export interface UblBuildOptions extends UblValidationOptions {
+  validate?: boolean;
 }
 
 export interface UblValidationIssue {

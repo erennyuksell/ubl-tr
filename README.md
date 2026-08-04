@@ -170,8 +170,33 @@ Options:
 type UblBuildOptions = {
   validate?: boolean; // default: true
   tolerance?: number; // default: 0.01 for amount comparison
+  providerAssignedInvoiceNo?: boolean; // default: false
 };
 ```
+
+#### Provider-assigned invoice numbers
+
+Turkish e-document providers usually allocate the invoice number themselves: submit a blank
+`cbc:ID` and the provider takes the next number from your registered series, or submit a
+3-character series prefix to pick a specific series. Set `providerAssignedInvoiceNo` so a blank
+`invoiceNo` is accepted and passed through to `cbc:ID` unchanged:
+
+```ts
+const document = buildUblInvoice(
+  { ...ublInput, invoiceNo: '' },
+  { providerAssignedInvoiceNo: true },
+);
+// document.ID === ''  → provider allocates the number
+
+const fromSeries = buildUblInvoice(
+  { ...ublInput, invoiceNo: 'ABC' },
+  { providerAssignedInvoiceNo: true },
+);
+// document.ID === 'ABC' → provider allocates from the ABC series
+```
+
+Every other validation rule still applies. Leave the flag off for standalone UBL-TR documents,
+where GİB requires a fully-formed 16-character number.
 
 ### `buildUblInvoiceXml(input, options?)`
 
@@ -247,7 +272,7 @@ Rules:
 
 Use this when your app has line-level amounts and you want consistent totals before building.
 
-### `validateUblInvoiceInput(input, tolerance?)`
+### `validateUblInvoiceInput(input, options?)`
 
 Validates an input and returns all issues instead of throwing.
 
@@ -282,7 +307,18 @@ It checks:
 
 Use this in forms, APIs, and tests where you want to display all problems at once.
 
-### `assertValidUblInvoiceInput(input, tolerance?)`
+Options:
+
+```ts
+type UblValidationOptions = {
+  tolerance?: number; // default: 0.01 for amount comparison
+  providerAssignedInvoiceNo?: boolean; // default: false — see "Provider-assigned invoice numbers"
+};
+```
+
+A bare `tolerance` number is still accepted as the second argument for backwards compatibility.
+
+### `assertValidUblInvoiceInput(input, options?)`
 
 Validates an input and throws `UblValidationError` if invalid.
 

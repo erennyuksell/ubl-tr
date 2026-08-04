@@ -1,5 +1,52 @@
 import { describe, expect, it } from 'vitest';
 import { buildUblInvoice } from '../src';
+import type { UblInvoiceInput } from '../src';
+
+const baseInput: UblInvoiceInput = {
+  invoiceNo: 'ABC2026000000001',
+  uuid: '550e8400-e29b-41d4-a716-446655440000',
+  issueDate: new Date('2026-05-25T09:00:00+03:00'),
+  profileId: 'TEMELFATURA',
+  invoiceTypeCode: 'SATIS',
+  currency: 'TRY',
+  taxExclusiveAmount: 1000,
+  taxAmount: 200,
+  discount: 0,
+  payableAmount: 1200,
+  supplier: {
+    vkn: '1234567890',
+    title: 'Supplier A.S.',
+    taxOffice: 'Istanbul',
+    address: {
+      street: 'Example Street',
+      district: 'Kadikoy',
+      city: 'Istanbul',
+      country: 'Turkiye',
+    },
+  },
+  customer: {
+    vkn: '11111111111',
+    title: 'Customer Name',
+    taxOffice: 'Istanbul',
+    address: {
+      street: 'Customer Street',
+      district: 'Besiktas',
+      city: 'Istanbul',
+      country: 'Turkiye',
+    },
+  },
+  lines: [
+    {
+      name: 'Software service',
+      quantity: 1,
+      unitCode: 'NIU',
+      price: 1000,
+      lineAmount: 1000,
+      vatRate: 20,
+      taxAmount: 200,
+    },
+  ],
+};
 
 describe('buildUblInvoice', () => {
   it('builds the core provider-independent UBL-TR invoice object', () => {
@@ -68,5 +115,26 @@ describe('buildUblInvoice', () => {
       LegalMonetaryTotal: { PayableAmount: { $value: 1200 } },
     });
     expect(invoice.InvoiceLine).toHaveLength(1);
+  });
+
+  it('rejects a blank invoice number by default', () => {
+    expect(() => buildUblInvoice({ ...baseInput, invoiceNo: '' })).toThrow(
+      /invoiceNo: Invoice number is required/,
+    );
+  });
+
+  it('passes a provider-assigned invoice number through to cbc:ID untouched', () => {
+    const blank = buildUblInvoice(
+      { ...baseInput, invoiceNo: '' },
+      { providerAssignedInvoiceNo: true },
+    );
+    expect(blank.ID).toBe('');
+
+    // A 3-character series prefix tells the provider which series to allocate from.
+    const prefixed = buildUblInvoice(
+      { ...baseInput, invoiceNo: 'ABC' },
+      { providerAssignedInvoiceNo: true },
+    );
+    expect(prefixed.ID).toBe('ABC');
   });
 });

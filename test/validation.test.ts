@@ -84,4 +84,36 @@ describe('validation', () => {
     );
     expect(() => assertValidUblInvoiceInput(invalid)).toThrow(UblValidationError);
   });
+
+  it('requires an invoice number by default', () => {
+    const blank = { ...validInput, invoiceNo: '' };
+
+    const result = validateUblInvoiceInput(blank);
+    expect(result.valid).toBe(false);
+    expect(result.issues.map((issue) => issue.path)).toContain('invoiceNo');
+  });
+
+  it('accepts a blank invoice number when the provider assigns it', () => {
+    const blank = { ...validInput, invoiceNo: '' };
+    const options = { providerAssignedInvoiceNo: true };
+
+    expect(validateUblInvoiceInput(blank, options)).toEqual({ valid: true, issues: [] });
+    expect(() => assertValidUblInvoiceInput(blank, options)).not.toThrow();
+  });
+
+  it('still reports other issues when the provider assigns the invoice number', () => {
+    const blank = { ...validInput, invoiceNo: '', taxAmount: 999 };
+
+    const result = validateUblInvoiceInput(blank, { providerAssignedInvoiceNo: true });
+    expect(result.valid).toBe(false);
+    expect(result.issues.map((issue) => issue.path)).toEqual(['taxAmount']);
+  });
+
+  it('keeps accepting tolerance as a positional argument', () => {
+    const drifted = { ...validInput, taxAmount: 200.005 };
+
+    expect(validateUblInvoiceInput(drifted, 0.0001).valid).toBe(false);
+    expect(validateUblInvoiceInput(drifted, 0.01).valid).toBe(true);
+    expect(validateUblInvoiceInput(drifted, { tolerance: 0.0001 }).valid).toBe(false);
+  });
 });

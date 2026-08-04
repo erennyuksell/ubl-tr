@@ -4,6 +4,7 @@ import type {
   UblInvoiceLine,
   UblParty,
   UblValidationIssue,
+  UblValidationOptions,
   UblValidationResult,
 } from './types';
 
@@ -109,13 +110,29 @@ export function calculateInvoiceTotals(lines: UblInvoiceLine[]): UblCalculatedTo
   };
 }
 
+/** Accept the legacy `tolerance` positional argument alongside the options object. */
+function resolveValidationOptions(
+  options: number | UblValidationOptions | undefined,
+): Required<UblValidationOptions> {
+  if (typeof options === 'number') {
+    return { tolerance: options, providerAssignedInvoiceNo: false };
+  }
+  return {
+    tolerance: options?.tolerance ?? DEFAULT_TOLERANCE,
+    providerAssignedInvoiceNo: options?.providerAssignedInvoiceNo ?? false,
+  };
+}
+
 export function validateUblInvoiceInput(
   input: UblInvoiceInput,
-  tolerance = DEFAULT_TOLERANCE,
+  options?: number | UblValidationOptions,
 ): UblValidationResult {
+  const { tolerance, providerAssignedInvoiceNo } = resolveValidationOptions(options);
   const issues: UblValidationIssue[] = [];
 
-  if (isBlank(input.invoiceNo)) addIssue(issues, 'invoiceNo', 'Invoice number is required.');
+  if (isBlank(input.invoiceNo) && !providerAssignedInvoiceNo) {
+    addIssue(issues, 'invoiceNo', 'Invoice number is required.');
+  }
   if (!(input.issueDate instanceof Date) || Number.isNaN(input.issueDate.getTime())) {
     addIssue(issues, 'issueDate', 'Issue date must be a valid Date.');
   }
@@ -166,9 +183,9 @@ export class UblValidationError extends Error {
 
 export function assertValidUblInvoiceInput(
   input: UblInvoiceInput,
-  tolerance = DEFAULT_TOLERANCE,
+  options?: number | UblValidationOptions,
 ): void {
-  const result = validateUblInvoiceInput(input, tolerance);
+  const result = validateUblInvoiceInput(input, options);
   if (!result.valid) {
     throw new UblValidationError(result.issues);
   }

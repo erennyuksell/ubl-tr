@@ -644,7 +644,7 @@ export function buildUblInvoice(
   options: UblBuildOptions = {},
 ): UblInvoiceDocument {
   if (options.validate !== false) {
-    assertValidUblInvoiceInput(input, options.tolerance);
+    assertValidUblInvoiceInput(input, options);
   }
 
   const currency = input.currency || 'TRY';

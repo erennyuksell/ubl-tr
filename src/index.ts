@@ -45,6 +45,7 @@ export type {
   UblBuildXmlOptions,
   UblCalculatedTotals,
   UblValidationIssue,
+  UblValidationOptions,
   UblValidationResult,
   UblXmlOptions,
 } from './types';

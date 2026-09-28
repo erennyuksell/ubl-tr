@@ -1,8 +1,16 @@
 # @erennyuksell/ubl-tr
 
-TypeScript utilities for building, validating, serializing, and parsing Turkish UBL-TR e-invoice documents.
+TypeScript utilities for calculating, building, validating, serializing, and parsing Turkish UBL-TR e-invoice documents.
 
-This package is a provider-independent UBL-TR layer. It helps you convert your own application's invoice data into a standard `UblInvoiceInput`, then into a UBL-TR document object or XML string.
+This package does the invoice arithmetic and produces the UBL-TR XML. Business decisions are its
+input: the VAT rate, the tevkifat code, whether a price includes VAT, the discount you grant.
+`calculateInvoice` turns them into every amount the document carries (line amounts, VAT,
+withholding, totals, in whole kuruş with one rounding each), and `buildUblInvoice` writes those
+amounts and nothing else. Use the same calculator in your forms and on your server, and the
+number the user sees is the number GİB receives.
+
+It is a provider-independent UBL-TR layer: your application maps its invoice data into a
+standard `UblInvoiceInput`, and the package returns a UBL-TR document object or XML string.
 
 It does not send invoices, sign XML, call GIB services, or integrate with Uyumsoft/Foriba/Logo directly. Use a provider SDK for those jobs.
 
@@ -17,7 +25,8 @@ import {
   InvoiceParser,
   buildUblInvoice,
   buildUblInvoiceXml,
-  calculateInvoiceTotals,
+  calculateInvoice,
+  splitVatInclusive,
   toUblXml,
   validateUblInvoiceInput,
 } from '@erennyuksell/ubl-tr';
@@ -30,7 +39,7 @@ Every application stores invoices differently. One app may have `customerName`, 
 This package does not try to understand every possible application model. Your app maps its own invoice model into the package's canonical input DTO:
 
 ```ts
-YourInvoiceModel -> your mapper -> UblInvoiceInput -> UBL-TR document object -> XML
+YourInvoiceModel -> your mapper -> UblInvoiceInput -> calculateInvoice -> UBL-TR document object -> XML
 ```
 
 The package starts working at `UblInvoiceInput`.
@@ -50,10 +59,15 @@ Use `buildUblInvoice` when another adapter or SDK needs to inspect or wrap the U
 
 ## What It Does
 
+- Calculates the invoice from its business inputs (`calculateInvoice`), including VAT-inclusive
+  prices, line and document discounts and surcharges and tevkifat. A net-priced line's VAT is
+  `round(net × rate)`; a VAT-inclusive line's VAT is taken out of its amount. No input passes a
+  VAT amount in.
+- Invoices a sale at a VAT-inclusive price for exactly the amount charged (`vatInclusiveAmount`,
+  `splitVatInclusive`).
 - Converts `UblInvoiceInput` into a GIB UBL-TR invoice document object.
 - Serializes UBL-TR document objects into XML.
 - Validates required invoice fields, parties, lines, totals, and tax amounts.
-- Calculates invoice totals from invoice lines.
 - Parses existing UBL-TR XML into a simpler typed data shape.
 - Provides common GIB tax/unit constants and TypeScript types.
 - Supports common e-Fatura/e-Arsiv fields, tevkifat, istisna, references, payment, delivery, shipment, and multi-currency metadata.
@@ -79,7 +93,7 @@ UBL document/XML -> Uyumsoft SDK/provider adapter -> SOAP/API send
 import {
   buildUblInvoice,
   buildUblInvoiceXml,
-  calculateInvoiceTotals,
+  calculateInvoice,
   type UblInvoiceInput,
   type UblInvoiceLine,
 } from '@erennyuksell/ubl-tr';
@@ -97,13 +111,12 @@ const lines: UblInvoiceLine[] = [
     quantity: 1,
     unitCode: 'NIU',
     price: 1000,
-    lineAmount: 1000,
     vatRate: 20,
-    taxAmount: 200,
   },
 ];
 
-const totals = calculateInvoiceTotals(lines);
+// Every amount, for your screen or your database: 1000 net, 200 VAT, 1200 payable.
+const totals = calculateInvoice({ lines });
 
 const ublInput: UblInvoiceInput = {
   invoiceNo: appInvoice.number,
@@ -112,7 +125,6 @@ const ublInput: UblInvoiceInput = {
   profileId: 'TEMELFATURA',
   invoiceTypeCode: 'SATIS',
   currency: 'TRY',
-  ...totals,
   supplier: {
     vkn: '1234567890',
     title: 'Supplier A.S.',
@@ -138,11 +150,153 @@ const ublInput: UblInvoiceInput = {
   lines,
 };
 
-const ublDocument = buildUblInvoice(ublInput);
+const ublDocument = buildUblInvoice(ublInput); // amounts from calculateInvoice
 const xml = buildUblInvoiceXml(ublInput);
 ```
 
+You may still pass the amounts you computed (`lineAmount`, `taxAmount`, the header totals): they
+are then checks, and any that differs from `calculateInvoice` by a kuruş fails the build.
+
 ## Public API
+
+### `calculateInvoice(input, options?)`
+
+Every amount of the invoice from its business inputs.
+
+```ts
+import { calculateInvoice } from '@erennyuksell/ubl-tr';
+
+const calc = calculateInvoice(
+  {
+    lines: [
+      { quantity: 12, price: 825.5, discountRate: 5, vatRate: 18 },
+      { quantity: 1, price: 0, vatInclusiveAmount: 1200, vatRate: 20 },
+      { quantity: 1, price: 20000, vatRate: 18, withholdingTaxCode: '606' },
+    ],
+    headerAllowanceCharges: [{ isCharge: false, percent: 2, reason: 'Genel iskonto' }],
+  },
+  { rounding: 'line' },
+);
+
+calc.lines[0].lineAmount; // net after discounts
+calc.lines[2].withholdingTaxAmount; // 9/10 of the VAT, from the 606 code
+calc.taxSubtotals; // VAT per rate
+calc.payableAmount;
+```
+
+Line inputs (`UblCalcLine`):
+
+```ts
+type UblCalcLine = {
+  quantity: number;
+  price: number; // VAT-exclusive; not read when vatInclusiveAmount is given
+  vatInclusiveAmount?: number; // the line's amount with VAT; the VAT is taken out of it
+  discount?: number; // amount; wins over discountRate
+  discountRate?: number; // percent of quantity × price
+  surchargeAmount?: number; // artırım amount; wins over surchargeRate
+  surchargeRate?: number;
+  vatRate: number; // percent
+  taxTypeCode?: string; // default 0015
+  taxExemptionReasonCode?: string;
+  taxExemptionReason?: string;
+  withholdingTaxCode?: string; // rate from WITHHOLDING_TAX_CODES
+};
+// Document level: `payableRoundingAmount` (PayableRoundingAmount), see below.
+```
+
+Document discounts and charges (`headerAllowanceCharges`, percent of the lines' net total or an
+amount) are spread over the lines by net amount, largest remainder, whole kuruş; each share is an
+AllowanceCharge of its line and the line's VAT is computed on what it really costs.
+
+The result (`UblCalcResult`) has, per line, the VAT-exclusive `price`, `grossAmount`
+(quantity × price), `allowanceCharges`, `discount`, `surchargeAmount`, `lineAmount`, `taxAmount`,
+`withholdingTaxRate` and `withholdingTaxAmount`; and for the document `lineExtensionAmount`,
+`allowanceTotalAmount`, `chargeTotalAmount`, `taxExclusiveAmount`, `vatAmount` (before
+withholding), `taxTotalAmount` (after withholding, as GİB's TaxTotal), `taxInclusiveAmount`,
+`taxSubtotals`, `withholdingTaxAmount`, `withholdingSubtotals`, `payableRoundingAmount` and
+`payableAmount`.
+
+Rounding: every amount is rounded once, half away from zero, in whole kuruş (`40.15 × 10%` →
+`4.02`, `2.135` → `2.14`); rates are applied with exact integer arithmetic.
+
+- `rounding: 'line'` (default): each line's VAT is `round(net × rate)`, as in GİB's examples
+  (`TicariFaturaOrnegi.xml` and `TEVKIFAT.xml` are reproduced to the kuruş), or taken out of its
+  `vatInclusiveAmount` (below).
+- `rounding: 'document'`: one `round(Σ net × rate)` per rate group, spread over its lines.
+
+It throws `UblValidationError` when an input cannot be computed: a negative amount, a discount
+larger than its line, an unknown tevkifat code, a `payableRoundingAmount` over one kuruş per line.
+
+### Selling at a VAT-inclusive price: `vatInclusiveAmount`
+
+A web shop or a subscription is sold at a VAT-inclusive price, and that price is what the customer
+is shown and charged. Give such a line `vatInclusiveAmount` instead of a price: the VAT is taken
+out of the amount, `round(amount × rate / (100 + rate))` half away from zero, the net is the rest,
+and the unit price is derived from the net. The line, and the invoice, come to the amount exactly.
+
+This is how VAT-inclusive prices are invoiced elsewhere too (Stripe, Shopify): the price stays,
+the VAT is extracted from it. Pricing from a net instead cannot reach every amount: at 20% no net
+`n` gives `n + round(n × 20%)` = 1000.05 (833.37 gives 1000.04, 833.38 gives 1000.06). The two
+rules never disagree where both apply: the amount of a net-priced line, split this way, gives back
+`round(net × rate)`. GİB's schematron checks the document totals, not a line's VAT against a
+formula.
+
+```ts
+import { calculateInvoice, splitVatInclusive } from '@erennyuksell/ubl-tr';
+
+const calc = calculateInvoice({
+  lines: [{ quantity: 1, price: 0, vatInclusiveAmount: 1000.05, vatRate: 20 }],
+});
+calc.lines[0]; // price 833.37, lineAmount 833.37, taxAmount 166.68
+calc.payableAmount; // 1000.05
+
+// The same split without a line, for a price list or an order record.
+splitVatInclusive(1000.05, 20); // { lineAmount: 833.37, taxAmount: 166.68 }
+```
+
+The line's discount and surcharge are amounts (VAT-exclusive, as on every line); the unit price
+is what the net comes from once they are taken back. Rates, document allowances
+(`headerAllowanceCharges`) and `rounding: 'document'` are not combined with it: each would move
+an amount that is fixed.
+
+### A total that net-priced lines miss: `payableRoundingAmount`
+
+A document whose total cannot move and whose net-priced lines miss it by a kuruş or two, such as
+the exact reversal of an invoice issued with another rounding, carries the difference in
+`LegalMonetaryTotal/PayableRoundingAmount`. It goes into the payable amount only, never into a
+line's VAT, and is limited to one kuruş per line either way. A sale at a VAT-inclusive price
+needs none.
+
+```ts
+calculateInvoice({
+  lines: [
+    { quantity: 1, price: 333.33, vatRate: 20 },
+    { quantity: 1, price: 83.34, vatRate: 20 },
+  ],
+  payableRoundingAmount: -0.01,
+}).payableAmount; // 500 (TaxInclusiveAmount 500.01)
+```
+
+### `allocateAmount(total, weights)`
+
+```ts
+import { allocateAmount } from '@erennyuksell/ubl-tr';
+
+// Share an amount in whole kuruş (largest remainder): a partial refund over the lines (each
+// share as the line's vatInclusiveAmount), a partial payment between net and VAT.
+allocateAmount(600, [1000, 200]); // [500, 100]
+allocateAmount(100, [1, 1, 1]); // [33.33, 33.33, 33.34]
+```
+
+### In the browser: `@erennyuksell/ubl-tr/calc`
+
+```ts
+import { calculateInvoice, splitVatInclusive } from '@erennyuksell/ubl-tr/calc';
+```
+
+The calculator, the VAT-inclusive split, the money helpers and the code tables (`WITHHOLDING_TAX_CODES`,
+`WITHHOLDING_INVOICE_TYPE_CODES`, `RETURN_INVOICE_TYPE_CODES`), without the XML builder and
+parser and without any dependency.
 
 ### `buildUblInvoice(input, options?)`
 
@@ -158,7 +312,7 @@ Use it when:
 - A provider SDK needs an object form before wrapping it.
 - You want to call `toUblXml` yourself with custom XML options.
 
-By default it validates the input before building. Disable validation only when you already validated upstream:
+Every number it writes comes from `calculateInvoice`. By default it validates the input before building. Disable validation only when you already validated upstream:
 
 ```ts
 const document = buildUblInvoice(ublInput, { validate: false });
@@ -169,10 +323,15 @@ Options:
 ```ts
 type UblBuildOptions = {
   validate?: boolean; // default: true
-  tolerance?: number; // default: 0.01 for amount comparison
+  rounding?: 'line' | 'document'; // default: 'line', see calculateInvoice
   providerAssignedInvoiceNo?: boolean; // default: false
 };
 ```
+
+`validate: false` skips the header, party and supplied-amount checks, but not what the
+calculator needs: an unknown tevkifat code, withholding without a code or a negative amount
+still throws `UblValidationError`. There is no fallback to `9015`, a code GİB rejects inside
+`WithholdingTaxTotal`.
 
 #### Provider-assigned invoice numbers
 
@@ -244,9 +403,10 @@ type UblXmlOptions = {
 
 Use custom namespaces only if your provider requires a special wrapper or namespace override.
 
-### `calculateInvoiceTotals(lines)`
+### `calculateInvoiceTotals(lines)` (deprecated)
 
-Calculates invoice-level totals from line data.
+Deprecated: use `calculateInvoice`, which returns every amount. Kept for callers of 0.2; it now
+runs the calculator and returns four of its totals.
 
 ```ts
 const totals = calculateInvoiceTotals(lines);
@@ -263,14 +423,10 @@ Returns:
 }
 ```
 
-Rules:
-
-- `taxExclusiveAmount` is the sum of `line.lineAmount`.
-- `taxAmount` is the sum of `line.taxAmount - line.withholdingTaxAmount`.
-- `discount` is the sum of `line.discount`.
-- `payableAmount` is `taxExclusiveAmount + taxAmount`.
-
-Use this when your app has line-level amounts and you want consistent totals before building.
+- `taxExclusiveAmount` is `calculateInvoice(...).taxExclusiveAmount`.
+- `taxAmount` is the VAT after withholding (`taxTotalAmount`).
+- `discount` is all discounts (`allowanceTotalAmount`).
+- `payableAmount` is TaxInclusiveAmount minus withholding.
 
 ### `validateUblInvoiceInput(input, options?)`
 
@@ -301,9 +457,23 @@ It checks:
 - Required header fields: `invoiceNo`, `issueDate`, `profileId`, `invoiceTypeCode`.
 - Supplier/customer VKN/TCKN format.
 - Supplier/customer title, tax office, city, and country.
-- At least one invoice line.
-- Line quantity, price, VAT rate, line amount, and tax amount.
-- Invoice totals against line totals.
+- At least one invoice line, and every input the calculator needs (quantity above zero,
+  non-negative price, discounts and surcharges, a discount no larger than its line).
+- Every amount you supplied, against `calculateInvoice`, exactly.
+- Withholding lines: a GİB tevkifat code from `WITHHOLDING_TAX_CODES` with GİB's rate for it
+  (606 is 9/10, 801-825 are 10/10), the withheld amount, and an invoice type that allows
+  withholding (`TEVKIFAT`, `IADE`, `SGK`, ...; see `WITHHOLDING_INVOICE_TYPE_CODES`). A
+  `TEVKIFAT` invoice without withholding lines is accepted, as GİB's schematron accepts it.
+- Return types (`RETURN_INVOICE_TYPE_CODES`: `IADE`, `TEVKIFATIADE`, `YTBIADE`,
+  `YTBTEVKIFATIADE`): `billingReferenceInvoiceNo`, the returned invoice's 16-character number.
+  There is no tolerance: a net-priced line's VAT other than `round(net × rate)` is rejected, and
+  a VAT-inclusive line's VAT is the one inside its amount. A fixed total net-priced lines miss is
+  closed with `payableRoundingAmount`, never with a line's VAT.
+
+There is no check of a rate group's VAT against `round(Σ net × rate)`. GİB's subtotals are the sum
+of the line VAT, and a line-by-line invoice (`40.15` and `160.45` at 10% give `4.02 + 16.05 =
+20.07`, the group rounded gives `20.06`) is accepted by GİB's schematron; such a check would
+reject it.
 
 Use this in forms, APIs, and tests where you want to display all problems at once.
 
@@ -311,12 +481,10 @@ Options:
 
 ```ts
 type UblValidationOptions = {
-  tolerance?: number; // default: 0.01 for amount comparison
-  providerAssignedInvoiceNo?: boolean; // default: false — see "Provider-assigned invoice numbers"
+  rounding?: 'line' | 'document'; // default: 'line'
+  providerAssignedInvoiceNo?: boolean; // default: false, see "Provider-assigned invoice numbers"
 };
 ```
-
-A bare `tolerance` number is still accepted as the second argument for backwards compatibility.
 
 ### `assertValidUblInvoiceInput(input, options?)`
 
@@ -368,8 +536,11 @@ It extracts:
 
 - Invoice id, UUID, issue date, profile, type, currency.
 - Supplier/customer name, VKN/TCKN, tax office, address.
-- Monetary totals and tax subtotals.
-- Invoice lines, quantities, unit codes, prices, amounts, and taxes.
+- Monetary totals (line extension, tax exclusive and inclusive, allowance total, payable), tax
+  subtotals, and the document withholding total and subtotals.
+- Invoice lines, quantities, unit codes, prices, amounts, and taxes; each line's allowances and
+  charges (`discount`, `surchargeAmount`, `allowanceCharges`) and its withholding
+  (`withholdings`: code, percent, withheld amount, VAT it was taken from).
 
 The parser preserves VKN/TCKN leading zeroes.
 
@@ -398,10 +569,12 @@ type UblInvoiceInput = {
   currency?: string;
   notes?: string[];
 
-  taxExclusiveAmount: number;
-  taxAmount: number;
-  discount: number;
-  payableAmount: number;
+  // Optional checks: computed by calculateInvoice, must equal it when given.
+  taxExclusiveAmount?: number;
+  taxAmount?: number; // VAT after withholding
+  discount?: number;
+  payableAmount?: number;
+  headerAllowanceCharges?: UblDocumentAllowanceCharge[]; // spread over the lines
 
   supplier: UblParty;
   customer: UblParty;
@@ -435,35 +608,28 @@ The package accepts strings for these fields because GIB/provider lists may chan
 One invoice line.
 
 ```ts
-type UblInvoiceLine = {
+type UblInvoiceLine = UblCalcLine & {
   name: string;
-  quantity: number;
   unitCode?: string; // default: NIU
-  price: number;
-  discount?: number;
-  lineAmount: number;
-  vatRate: number;
-  taxAmount: number;
-  taxTypeCode?: string; // default: 0015
-  taxExemptionReasonCode?: string;
-  taxExemptionReason?: string;
-  withholdingTaxCode?: string;
-  withholdingTaxRate?: number;
-  withholdingTaxAmount?: number;
+  discountReason?: string;
+  surchargeReason?: string;
+  // Optional checks, computed by calculateInvoice; each must equal it when given:
+  lineAmount?: number; // quantity * price - discount + surchargeAmount
+  taxAmount?: number; // VAT before withholding
+  withholdingTaxRate?: number; // GİB's rate for withholdingTaxCode (90 for 9/10)
+  withholdingTaxAmount?: number; // round(taxAmount * rate / 100), half away from zero
 };
 ```
 
-Example with discount:
+Example with discount (the net, 900, and VAT, 180, are calculated):
 
 ```ts
 const line = {
   name: 'Consulting',
   quantity: 2,
   price: 500,
-  discount: 100,
-  lineAmount: 900,
+  discount: 100, // or discountRate: 10
   vatRate: 20,
-  taxAmount: 180,
 };
 ```
 
@@ -474,29 +640,39 @@ const line = {
   name: 'Exempt service',
   quantity: 1,
   price: 1000,
-  lineAmount: 1000,
   vatRate: 0,
-  taxAmount: 0,
   taxExemptionReasonCode: '301',
   taxExemptionReason: '11/1-a Mal ihracati',
 };
 ```
 
-Example with withholding VAT:
+Example with a surcharge (artırım), net 1100:
+
+```ts
+const line = {
+  name: 'Consulting',
+  quantity: 1,
+  price: 1000,
+  surchargeRate: 10, // or surchargeAmount: 100
+  vatRate: 20,
+};
+```
+
+Example with withholding VAT (the invoice type must allow it, e.g. `TEVKIFAT`):
 
 ```ts
 const line = {
   name: 'Withholding service',
   quantity: 1,
   price: 1000,
-  lineAmount: 1000,
   vatRate: 20,
-  taxAmount: 200,
-  withholdingTaxCode: '601',
-  withholdingTaxRate: 50,
-  withholdingTaxAmount: 100,
+  withholdingTaxCode: '606', // 9/10 of the VAT: 180 withheld, 1020 payable
 };
 ```
+
+The line gets its own `WithholdingTaxTotal`, the document one per code and rate. As in GİB's
+`TEVKIFAT.xml`, `TaxTotal/TaxAmount` is the VAT left after withholding, `TaxInclusiveAmount` holds
+the full VAT and `PayableAmount` is `TaxInclusiveAmount` minus the withholding.
 
 ### `UblParty`
 
@@ -643,8 +819,9 @@ const input = {
 ### 1. Map Your CRM Invoice To `UblInvoiceInput`
 
 ```ts
-import { calculateInvoiceTotals, type UblInvoiceInput } from '@erennyuksell/ubl-tr';
+import { type UblInvoiceInput } from '@erennyuksell/ubl-tr';
 
+// Map the business inputs; the amounts come from calculateInvoice.
 function mapInvoiceToUblInput(invoice: CrmInvoice): UblInvoiceInput {
   const lines = invoice.items.map((item) => ({
     name: item.description,
@@ -652,9 +829,8 @@ function mapInvoiceToUblInput(invoice: CrmInvoice): UblInvoiceInput {
     unitCode: item.unitCode ?? 'NIU',
     price: item.unitPrice,
     discount: item.discountAmount ?? 0,
-    lineAmount: item.netAmount,
     vatRate: item.vatRate,
-    taxAmount: item.vatAmount,
+    withholdingTaxCode: item.tevkifatCode,
   }));
 
   return {
@@ -663,7 +839,6 @@ function mapInvoiceToUblInput(invoice: CrmInvoice): UblInvoiceInput {
     profileId: invoice.profile,
     invoiceTypeCode: invoice.type,
     currency: invoice.currency ?? 'TRY',
-    ...calculateInvoiceTotals(lines),
     supplier: {
       vkn: invoice.seller.taxId,
       title: invoice.seller.title,
@@ -734,7 +909,9 @@ import {
   DEFAULT_TAX_TYPE_CODE,
   DEFAULT_TAX_TYPE_NAME,
   TAX_CODE_NAMES,
-  WITHHOLDING_TAX_TYPE_CODE,
+  WITHHOLDING_TAX_CODES,
+  WITHHOLDING_INVOICE_TYPE_CODES,
+  RETURN_INVOICE_TYPE_CODES,
 } from '@erennyuksell/ubl-tr';
 ```
 
@@ -743,8 +920,27 @@ Exports:
 - `DEFAULT_UNIT_CODE`: `NIU`
 - `DEFAULT_TAX_TYPE_CODE`: `0015`
 - `DEFAULT_TAX_TYPE_NAME`: `KDV`
-- `WITHHOLDING_TAX_TYPE_CODE`: `9015`
 - `TAX_CODE_NAMES`: common GIB tax code/name map
+- `WITHHOLDING_TAX_CODES`: GİB KDV tevkifat codes with their name and fixed rate, 601-627
+  (partial) and 801-825 (full, 10/10). Checked against the schematron of Uyumsoft's test
+  environment; 650 is left out because that schematron rejects it.
+- `WITHHOLDING_INVOICE_TYPE_CODES`: invoice types that may carry withholding.
+- `RETURN_INVOICE_TYPE_CODES`: return types, which need a `BillingReference`.
+- `WITHHOLDING_TAX_TYPE_CODE`: `9015`, deprecated and no longer written.
+
+## Money Helpers
+
+The rounding validation uses, for callers that want to compute amounts the same way:
+
+```ts
+import { roundMoney, roundTo, toMinor, fromMinor, sumInMinor } from '@erennyuksell/ubl-tr';
+
+roundMoney(2.135); // 2.14, half away from zero, never -0
+roundTo(27.7777777777, 8); // 27.77777778
+toMinor(16.755); // 1676 (kuruş)
+fromMinor(1676); // 16.76
+sumInMinor([0.1, 0.2]); // 30, added in kuruş
+```
 
 Example:
 
@@ -761,8 +957,10 @@ Validation is intentionally conservative:
 - VKN must be 10 digits.
 - TCKN must be 11 digits.
 - Supplier/customer title, tax office, city, and country are required.
-- Line totals must match `quantity * price - discount + surchargeAmount`.
-- Tax totals must match line totals within tolerance.
+- Every supplied amount must equal `calculateInvoice` to the kuruş; `payableRoundingAmount` is at
+  most one kuruş per line.
+- Withholding needs a known tevkifat code at GİB's rate for it, and an invoice type that allows it.
+- Return invoices need the returned invoice's 16-character number.
 
 For production, validate generated XML against the current official GIB requirements and your private integrator's rules.
 
@@ -777,6 +975,8 @@ import { buildUblInvoiceXml } from '@erennyuksell/ubl-tr';
 ```js
 const { buildUblInvoiceXml } = require('@erennyuksell/ubl-tr');
 ```
+
+Both entry points, `@erennyuksell/ubl-tr` and `@erennyuksell/ubl-tr/calc`, ship both formats.
 
 ## Development
 

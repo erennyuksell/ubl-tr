@@ -41,11 +41,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./calc": {
+      "types": "./dist/calc.d.ts",
+      "import": "./dist/calc.js",
+      "require": "./dist/calc.cjs"
     }
   },
   "scripts": {
     "clean": "rimraf dist",
-    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "build": "tsup",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

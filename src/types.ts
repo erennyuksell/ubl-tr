@@ -21,30 +21,183 @@ export interface UblEArchiveInfo {
   internetSalesInfo?: UblInternetSalesInfo;
 }
 
+// ─── Calculation (calculateInvoice) ─────────────────────
+
+/** How VAT is rounded: per line (GİB's examples, the default) or once per rate group. */
+export type UblRounding = 'line' | 'document';
+
+/**
+ * One line as the calculator reads it: the business inputs. Amounts are computed from these;
+ * nothing here is a result.
+ */
+export interface UblCalcLine {
+  quantity: number;
+  /** Unit price, VAT-exclusive. Not read when `vatInclusiveAmount` is given (pass 0 or the last result). */
+  price: number;
+  /**
+   * The line's amount with VAT, after its discount and surcharge: a VAT-inclusive price, the
+   * amount the customer is charged. The VAT is taken out of it, `round(amount × rate / (100 +
+   * rate))`, the net is the rest (`splitVatInclusive`), and the unit price is derived from the net
+   * (eight decimals). The line comes to this amount exactly. Its discount and surcharge are given
+   * as amounts (VAT-exclusive, as on every line); rates, document allowances and
+   * `rounding: 'document'` are not combined with it.
+   */
+  vatInclusiveAmount?: number;
+  /** Line discount (iskonto) amount, VAT-exclusive. Wins over `discountRate` when both are given. */
+  discount?: number;
+  /** Line discount as a percent of quantity × price (5 = 5%). */
+  discountRate?: number;
+  /** Line surcharge (artırım) amount, VAT-exclusive. Wins over `surchargeRate` when both are given. */
+  surchargeAmount?: number;
+  /** Line surcharge as a percent of quantity × price (10 = 10%). */
+  surchargeRate?: number;
+  /** Percent (20 = 20%). */
+  vatRate: number;
+  /** GİB tax type code of the VAT (default 0015). Lines are grouped by rate and code. */
+  taxTypeCode?: string;
+  taxExemptionReasonCode?: string;
+  taxExemptionReason?: string;
+  /** GİB tevkifat code; the rate comes from `WITHHOLDING_TAX_CODES`. */
+  withholdingTaxCode?: string;
+}
+
+/**
+ * A document-level allowance (iskonto) or charge (artırım). It is spread over the lines in
+ * proportion to their net amounts (largest remainder, whole kuruş) and written on each line as an
+ * AllowanceCharge of its own, so that every line's VAT is computed on what it really costs.
+ */
+export interface UblDocumentAllowanceCharge {
+  isCharge: boolean;
+  /** Percent of the lines' net total (5 = 5%). */
+  percent?: number;
+  /** Amount, VAT-exclusive. Wins over `percent` when both are given. */
+  amount?: number;
+  /** Optional check: must equal the lines' net total the percent is taken from. */
+  baseAmount?: number;
+  reason?: string;
+}
+
+/** Input of `calculateInvoice`. `UblInvoiceInput` satisfies it. */
+export interface UblCalcInput {
+  lines: readonly UblCalcLine[];
+  headerAllowanceCharges?: readonly UblDocumentAllowanceCharge[];
+  /**
+   * LegalMonetaryTotal/PayableRoundingAmount: added to the payable amount, never to a line. For a
+   * document whose total is fixed and whose lines cannot reach it, such as the exact reversal of
+   * an invoice issued with another rounding. At most one kuruş per line either way. A sale at a
+   * VAT-inclusive price needs none: give its lines `vatInclusiveAmount`.
+   */
+  payableRoundingAmount?: number;
+}
+
+export interface UblCalcOptions {
+  /**
+   * Default `'line'`: each line's VAT is `round(net × rate)`, as in GİB's examples, or taken out of
+   * its `vatInclusiveAmount`.
+   */
+  rounding?: UblRounding;
+}
+
+/** One AllowanceCharge of a line, as written to the XML. */
+export interface UblCalcAllowanceCharge {
+  isCharge: boolean;
+  reason?: string;
+  amount: number;
+  baseAmount: number;
+  /** MultiplierFactorNumeric: a fraction (0.05 for 5%), as GİB writes it. */
+  multiplierFactor?: number;
+  /** Share of a document-level allowance or charge. */
+  fromDocument: boolean;
+}
+
+export interface UblCalcLineResult {
+  /** VAT-exclusive unit price, eight decimals (PriceAmount). */
+  price: number;
+  quantity: number;
+  /** quantity × price, to the kuruş (the AllowanceCharge BaseAmount). */
+  grossAmount: number;
+  allowanceCharges: UblCalcAllowanceCharge[];
+  /** All allowances of the line, document shares included. */
+  discount: number;
+  /** All charges of the line, document shares included. */
+  surchargeAmount: number;
+  /** LineExtensionAmount: gross − discount + surcharge. */
+  lineAmount: number;
+  vatRate: number;
+  taxTypeCode: string;
+  /** VAT before withholding. */
+  taxAmount: number;
+  withholdingTaxCode?: string;
+  withholdingTaxRate: number;
+  withholdingTaxAmount: number;
+}
+
+export interface UblCalcTaxSubtotal {
+  vatRate: number;
+  taxTypeCode: string;
+  taxExemptionReasonCode?: string;
+  taxExemptionReason?: string;
+  taxableAmount: number;
+  taxAmount: number;
+}
+
+export interface UblCalcWithholdingSubtotal {
+  code: string;
+  rate: number;
+  /** The VAT the withholding is taken from. */
+  taxableAmount: number;
+  taxAmount: number;
+}
+
+/** Output of `calculateInvoice`: every amount the UBL-TR document carries. */
+export interface UblCalcResult {
+  lines: UblCalcLineResult[];
+  /** LegalMonetaryTotal/LineExtensionAmount: before discounts, surcharges included (GİB). */
+  lineExtensionAmount: number;
+  /** LegalMonetaryTotal/AllowanceTotalAmount: all discounts. */
+  allowanceTotalAmount: number;
+  /** All surcharges. Already inside lineExtensionAmount; GİB's viewer shows no ChargeTotal. */
+  chargeTotalAmount: number;
+  /** Σ line amounts. */
+  taxExclusiveAmount: number;
+  /** VAT before withholding (Σ taxSubtotals). */
+  vatAmount: number;
+  /** Net plus the full VAT. */
+  taxInclusiveAmount: number;
+  /** TaxTotal/TaxAmount: VAT after withholding, as in GİB's TEVKIFAT.xml. */
+  taxTotalAmount: number;
+  taxSubtotals: UblCalcTaxSubtotal[];
+  withholdingTaxAmount: number;
+  withholdingSubtotals: UblCalcWithholdingSubtotal[];
+  /** PayableRoundingAmount, 0 when none was given. */
+  payableRoundingAmount: number;
+  /** TaxInclusiveAmount − withholding + payableRoundingAmount. */
+  payableAmount: number;
+}
+
 // ─── Core Types ──────────────────────────────────────────
 
 /**
- * Input for building a UBL-TR invoice line.
- * Maps directly to GİB UBL-TR InvoiceLine element.
+ * Input for building a UBL-TR invoice line: the calculator's inputs (`UblCalcLine`) plus what the
+ * document says about the item. The amounts are computed by `calculateInvoice`; the optional
+ * amount fields below are checks, kept for callers that computed them: each must equal the
+ * calculated value exactly, or building fails.
  */
-export interface UblInvoiceLine {
+export interface UblInvoiceLine extends UblCalcLine {
   name: string;
   description?: string;
-  quantity: number;
   unitCode?: string; // GİB birim kodu (default: NIU = adet)
-  price: number;
-  discount?: number;
   discountReason?: string;
-  lineAmount: number;
-  vatRate: number;
-  taxAmount: number;
-  taxTypeCode?: string; // GİB vergi kodu (default: 0015 = KDV)
-  withholdingTaxCode?: string;
-  withholdingTaxRate?: number;
-  withholdingTaxAmount?: number;
+  surchargeReason?: string;
   withholdingTaxName?: string;
-  taxExemptionReasonCode?: string;
-  taxExemptionReason?: string;
+  /** Check: quantity × price − discount + surcharge, to the kuruş. */
+  lineAmount?: number;
+  /** Check: the line's VAT before withholding. */
+  taxAmount?: number;
+  /** Check: GİB's rate for `withholdingTaxCode`. */
+  withholdingTaxRate?: number;
+  /** Check: round(taxAmount × withholding rate). */
+  withholdingTaxAmount?: number;
   // ─── Identification ───
   sellerCode?: string; // SellersItemIdentification.ID
   buyerCode?: string; // BuyersItemIdentification.ID
@@ -61,10 +214,6 @@ export interface UblInvoiceLine {
   despatchDocDate?: string;
   orderNo?: string; // OrderLineReference
   orderDate?: string;
-  // ─── Surcharge (AllowanceCharge isCharge=true) ───
-  surchargeRate?: number;
-  surchargeAmount?: number;
-  surchargeReason?: string;
   delivery?: UblDelivery;
   // ─── Extra ───
   note?: string;
@@ -250,11 +399,16 @@ export interface UblInvoiceInput {
   paymentCurrencyCode?: string;
   exchangeRate?: number;
 
-  // ── Amounts ──────────────────────────────────────
-  taxExclusiveAmount: number;
-  taxAmount: number;
-  discount: number;
-  payableAmount: number;
+  // ── Amounts (checks) ─────────────────────────────
+  // Computed by `calculateInvoice`. When given, each must equal the calculated value exactly.
+  taxExclusiveAmount?: number;
+  /** VAT after withholding (TaxTotal/TaxAmount). */
+  taxAmount?: number;
+  /** All discounts (AllowanceTotalAmount). */
+  discount?: number;
+  payableAmount?: number;
+  /** Input, not a check: see `UblCalcInput.payableRoundingAmount`. */
+  payableRoundingAmount?: number;
 
   // ── Lines ────────────────────────────────────────
   lines: UblInvoiceLine[];
@@ -284,7 +438,7 @@ export interface UblInvoiceInput {
   receiptDocumentDate?: string;
   contractDocumentNo?: string; // Sözleşme referansı
   contractDocumentDate?: string;
-  billingReferenceInvoiceNo?: string;
+  billingReferenceInvoiceNo?: string; // Returned invoice's 16-character GİB number; required on returns
   billingReferenceIssueDate?: string;
   additionalDocumentReferences?: Array<{
     id: string;
@@ -293,14 +447,9 @@ export interface UblInvoiceInput {
     documentDescription?: string;
   }>;
 
-  // ── Header-level allowance/charge ────────────────
-  headerAllowanceCharges?: Array<{
-    isCharge: boolean;
-    percent?: number;
-    amount: number;
-    baseAmount?: number;
-    reason?: string;
-  }>;
+  // ── Document-level allowance/charge ──────────────
+  /** Spread over the lines by `calculateInvoice`; see `UblDocumentAllowanceCharge`. */
+  headerAllowanceCharges?: UblDocumentAllowanceCharge[];
 
   // ── e-Arşiv (GİB legal requirements — VUK 433) ──
   eArchiveInfo?: UblEArchiveInfo;
@@ -348,8 +497,7 @@ export interface UblInvoiceDocument extends UblElement {
   InvoiceLine: UblElement[];
 }
 
-export interface UblValidationOptions {
-  tolerance?: number;
+export interface UblValidationOptions extends UblCalcOptions {
   /**
    * The invoice number (cbc:ID) is assigned by the e-document provider rather than the caller.
    *

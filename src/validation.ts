@@ -1,4 +1,9 @@
+import { RETURN_INVOICE_TYPE_CODES, WITHHOLDING_INVOICE_TYPE_CODES } from './constants';
+import { computeInvoice } from './calc';
+import { UblValidationError } from './errors';
+import { toMinor } from './money';
 import type {
+  UblCalcResult,
   UblCalculatedTotals,
   UblInvoiceInput,
   UblInvoiceLine,
@@ -8,15 +13,10 @@ import type {
   UblValidationResult,
 } from './types';
 
-const DEFAULT_TOLERANCE = 0.01;
+export { UblValidationError } from './errors';
 
-function roundMoney(value: number): number {
-  return Number(value.toFixed(2));
-}
-
-function isFiniteNumber(value: number): boolean {
-  return Number.isFinite(value);
-}
+/** GİB invoice numbers are 16 characters (3-character series, year, 9-digit sequence). */
+const GIB_INVOICE_NO_LENGTH = 16;
 
 function isBlank(value: string | undefined): boolean {
   return value == null || value.trim() === '';
@@ -24,10 +24,6 @@ function isBlank(value: string | undefined): boolean {
 
 function addIssue(issues: UblValidationIssue[], path: string, message: string): void {
   issues.push({ path, message });
-}
-
-function isClose(actual: number, expected: number, tolerance: number): boolean {
-  return Math.abs(actual - expected) <= tolerance;
 }
 
 function validateParty(party: UblParty, path: string, issues: UblValidationIssue[]): void {
@@ -46,91 +42,123 @@ function validateParty(party: UblParty, path: string, issues: UblValidationIssue
   if (isBlank(party.taxOffice)) addIssue(issues, `${path}.taxOffice`, 'Tax office is required.');
 }
 
-function validateLine(
-  line: UblInvoiceLine,
-  index: number,
+/** A given amount must equal the calculated one to the kuruş; there is no tolerance. */
+function checkEqual(
   issues: UblValidationIssue[],
-  tolerance: number,
+  path: string,
+  given: number | undefined,
+  expected: number,
 ): void {
-  const path = `lines[${index}]`;
-  if (isBlank(line.name)) addIssue(issues, `${path}.name`, 'Line name is required.');
-
-  for (const [field, value] of [
-    ['quantity', line.quantity],
-    ['price', line.price],
-    ['lineAmount', line.lineAmount],
-    ['vatRate', line.vatRate],
-    ['taxAmount', line.taxAmount],
-  ] as const) {
-    if (!isFiniteNumber(value)) addIssue(issues, `${path}.${field}`, 'Must be a finite number.');
-  }
-
-  if (line.quantity <= 0)
-    addIssue(issues, `${path}.quantity`, 'Quantity must be greater than zero.');
-  if (line.price < 0) addIssue(issues, `${path}.price`, 'Price cannot be negative.');
-  if (line.lineAmount < 0)
-    addIssue(issues, `${path}.lineAmount`, 'Line amount cannot be negative.');
-  if (line.vatRate < 0) addIssue(issues, `${path}.vatRate`, 'VAT rate cannot be negative.');
-  if (line.taxAmount < 0) addIssue(issues, `${path}.taxAmount`, 'Tax amount cannot be negative.');
-
-  const expectedLineAmount = roundMoney(
-    line.quantity * line.price - (line.discount ?? 0) + (line.surchargeAmount ?? 0),
-  );
-  if (!isClose(line.lineAmount, expectedLineAmount, tolerance)) {
-    addIssue(
-      issues,
-      `${path}.lineAmount`,
-      `Expected ${expectedLineAmount} from quantity, price, discount, and surcharge.`,
-    );
-  }
-
-  const expectedTaxAmount = roundMoney(line.lineAmount * (line.vatRate / 100));
-  if (!line.taxExemptionReasonCode && !isClose(line.taxAmount, expectedTaxAmount, tolerance)) {
-    addIssue(
-      issues,
-      `${path}.taxAmount`,
-      `Expected ${expectedTaxAmount} from lineAmount and vatRate.`,
-    );
+  if (given === undefined) return;
+  if (!Number.isFinite(given)) {
+    addIssue(issues, path, 'Must be a finite number.');
+  } else if (toMinor(given) !== toMinor(expected)) {
+    addIssue(issues, path, `Expected ${expected} (calculateInvoice), got ${given}.`);
   }
 }
 
-export function calculateInvoiceTotals(lines: UblInvoiceLine[]): UblCalculatedTotals {
-  const taxExclusiveAmount = roundMoney(lines.reduce((sum, line) => sum + line.lineAmount, 0));
-  const taxAmount = roundMoney(
-    lines.reduce((sum, line) => sum + line.taxAmount - (line.withholdingTaxAmount ?? 0), 0),
-  );
-  const discount = roundMoney(lines.reduce((sum, line) => sum + (line.discount ?? 0), 0));
-  const payableAmount = roundMoney(taxExclusiveAmount + taxAmount);
+/**
+ * Amounts the caller supplied next to the business inputs (the pre-0.3.0 API). Each one must be
+ * exactly what the calculator produces.
+ */
+function checkGivenAmounts(
+  input: UblInvoiceInput,
+  calc: UblCalcResult,
+  issues: UblValidationIssue[],
+): void {
+  input.lines.forEach((line: UblInvoiceLine, index) => {
+    const result = calc.lines[index];
+    if (!result) return;
+    const path = `lines[${index}]`;
+    checkEqual(issues, `${path}.lineAmount`, line.lineAmount, result.lineAmount);
+    checkEqual(issues, `${path}.taxAmount`, line.taxAmount, result.taxAmount);
+    if (line.withholdingTaxRate !== undefined && line.withholdingTaxCode) {
+      if (line.withholdingTaxRate !== result.withholdingTaxRate && result.withholdingTaxCode) {
+        addIssue(
+          issues,
+          `${path}.withholdingTaxRate`,
+          `Withholding code ${result.withholdingTaxCode} withholds ${result.withholdingTaxRate}% of the VAT, not ${line.withholdingTaxRate}%.`,
+        );
+      }
+    }
+    // Without a code the missing code is the problem; the amount has nothing to follow.
+    if (!isBlank(line.withholdingTaxCode)) {
+      checkEqual(
+        issues,
+        `${path}.withholdingTaxAmount`,
+        line.withholdingTaxAmount,
+        result.withholdingTaxAmount,
+      );
+    }
+  });
+  checkEqual(issues, 'taxExclusiveAmount', input.taxExclusiveAmount, calc.taxExclusiveAmount);
+  checkEqual(issues, 'taxAmount', input.taxAmount, calc.taxTotalAmount);
+  checkEqual(issues, 'discount', input.discount, calc.allowanceTotalAmount);
+  checkEqual(issues, 'payableAmount', input.payableAmount, calc.payableAmount);
+}
 
+/** Withholding data without a code: the rate would have nothing to come from. */
+function checkWithholdingCodes(input: UblInvoiceInput, issues: UblValidationIssue[]): void {
+  input.lines.forEach((line, index) => {
+    const legacy = (line.withholdingTaxAmount ?? 0) !== 0 || (line.withholdingTaxRate ?? 0) !== 0;
+    if (legacy && isBlank(line.withholdingTaxCode)) {
+      addIssue(
+        issues,
+        `lines[${index}].withholdingTaxCode`,
+        'Withholding tax code is required (GİB tevkifat code such as 601-627 or 801-825).',
+      );
+    }
+  });
+}
+
+/**
+ * The calculation and the problems that make it impossible to write a correct document:
+ * the calculator's own, and withholding data without a tevkifat code. The builder stops on these
+ * even with `validate: false`.
+ */
+export function calculateForBuild(
+  input: UblInvoiceInput,
+  options: UblValidationOptions = {},
+): { calc: UblCalcResult; issues: UblValidationIssue[] } {
+  const { result: calc, issues } = computeInvoice(input, options);
+  checkWithholdingCodes(input, issues);
+  return { calc, issues };
+}
+
+/**
+ * Invoice totals from the lines, via `calculateInvoice`.
+ *
+ * `taxAmount` is VAT after withholding and `payableAmount` is TaxInclusiveAmount − withholding.
+ * Throws `UblValidationError` when a line cannot be computed.
+ *
+ * @deprecated Use `calculateInvoice`, which returns every amount of the document.
+ */
+export function calculateInvoiceTotals(
+  lines: UblInvoiceLine[],
+  options: UblValidationOptions = {},
+): UblCalculatedTotals {
+  const { result, issues } = computeInvoice({ lines }, options);
+  if (issues.length > 0) throw new UblValidationError(issues);
   return {
-    taxExclusiveAmount,
-    taxAmount,
-    discount,
-    payableAmount,
+    taxExclusiveAmount: result.taxExclusiveAmount,
+    taxAmount: result.taxTotalAmount,
+    discount: result.allowanceTotalAmount,
+    payableAmount: result.payableAmount,
   };
 }
 
-/** Accept the legacy `tolerance` positional argument alongside the options object. */
-function resolveValidationOptions(
-  options: number | UblValidationOptions | undefined,
-): Required<UblValidationOptions> {
-  if (typeof options === 'number') {
-    return { tolerance: options, providerAssignedInvoiceNo: false };
-  }
-  return {
-    tolerance: options?.tolerance ?? DEFAULT_TOLERANCE,
-    providerAssignedInvoiceNo: options?.providerAssignedInvoiceNo ?? false,
-  };
-}
-
+/**
+ * Validates an invoice input and returns every problem: missing header and party data, the
+ * calculator's input problems, and any supplied amount that differs from what `calculateInvoice`
+ * produces (exactly, no tolerance).
+ */
 export function validateUblInvoiceInput(
   input: UblInvoiceInput,
-  options?: number | UblValidationOptions,
+  options: UblValidationOptions = {},
 ): UblValidationResult {
-  const { tolerance, providerAssignedInvoiceNo } = resolveValidationOptions(options);
   const issues: UblValidationIssue[] = [];
 
-  if (isBlank(input.invoiceNo) && !providerAssignedInvoiceNo) {
+  if (isBlank(input.invoiceNo) && !options.providerAssignedInvoiceNo) {
     addIssue(issues, 'invoiceNo', 'Invoice number is required.');
   }
   if (!(input.issueDate instanceof Date) || Number.isNaN(input.issueDate.getTime())) {
@@ -139,28 +167,34 @@ export function validateUblInvoiceInput(
   if (isBlank(input.profileId)) addIssue(issues, 'profileId', 'ProfileID is required.');
   if (isBlank(input.invoiceTypeCode))
     addIssue(issues, 'invoiceTypeCode', 'InvoiceTypeCode is required.');
-  if (input.lines.length === 0) addIssue(issues, 'lines', 'At least one invoice line is required.');
 
   validateParty(input.supplier, 'supplier', issues);
   validateParty(input.customer, 'customer', issues);
-  input.lines.forEach((line, index) => validateLine(line, index, issues, tolerance));
 
-  const totals = calculateInvoiceTotals(input.lines);
-  if (!isClose(input.taxExclusiveAmount, totals.taxExclusiveAmount, tolerance)) {
+  const { calc, issues: calcIssues } = calculateForBuild(input, options);
+  issues.push(...calcIssues);
+  checkGivenAmounts(input, calc, issues);
+
+  if (
+    calc.lines.some((line) => line.withholdingTaxCode) &&
+    !WITHHOLDING_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode)
+  ) {
     addIssue(
       issues,
-      'taxExclusiveAmount',
-      `Expected ${totals.taxExclusiveAmount} from invoice lines.`,
+      'invoiceTypeCode',
+      `Withholding lines need a withholding invoice type such as TEVKIFAT, not ${input.invoiceTypeCode}.`,
     );
   }
-  if (!isClose(input.taxAmount, totals.taxAmount, tolerance)) {
-    addIssue(issues, 'taxAmount', `Expected ${totals.taxAmount} from invoice lines.`);
-  }
-  if (!isClose(input.discount, totals.discount, tolerance)) {
-    addIssue(issues, 'discount', `Expected ${totals.discount} from invoice lines.`);
-  }
-  if (!isClose(input.payableAmount, totals.payableAmount, tolerance)) {
-    addIssue(issues, 'payableAmount', `Expected ${totals.payableAmount} from invoice lines.`);
+
+  if (RETURN_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode)) {
+    const reference = input.billingReferenceInvoiceNo?.trim() ?? '';
+    if (reference.length !== GIB_INVOICE_NO_LENGTH) {
+      addIssue(
+        issues,
+        'billingReferenceInvoiceNo',
+        `${input.invoiceTypeCode} needs the returned invoice's 16-character GİB number.`,
+      );
+    }
   }
 
   return {
@@ -169,21 +203,9 @@ export function validateUblInvoiceInput(
   };
 }
 
-export class UblValidationError extends Error {
-  readonly issues: UblValidationIssue[];
-
-  constructor(issues: UblValidationIssue[]) {
-    super(
-      `Invalid UBL-TR invoice input: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`,
-    );
-    this.name = 'UblValidationError';
-    this.issues = issues;
-  }
-}
-
 export function assertValidUblInvoiceInput(
   input: UblInvoiceInput,
-  options?: number | UblValidationOptions,
+  options: UblValidationOptions = {},
 ): void {
   const result = validateUblInvoiceInput(input, options);
   if (!result.valid) {

@@ -3,6 +3,9 @@
 // 100% GİB UBL-TR v1.2.1 compliant
 
 export { buildUblInvoice, buildUblInvoiceXml } from './builder';
+export { calculateInvoice } from './calc';
+export { allocateAmount, splitVatInclusive } from './allocate';
+export type { UblVatInclusiveSplit } from './allocate';
 export { InvoiceParser } from './parser';
 export { toUblXml } from './xml';
 export {
@@ -44,6 +47,16 @@ export type {
   UblBuildOptions,
   UblBuildXmlOptions,
   UblCalculatedTotals,
+  UblRounding,
+  UblCalcLine,
+  UblCalcInput,
+  UblCalcOptions,
+  UblCalcResult,
+  UblCalcLineResult,
+  UblCalcAllowanceCharge,
+  UblCalcTaxSubtotal,
+  UblCalcWithholdingSubtotal,
+  UblDocumentAllowanceCharge,
   UblValidationIssue,
   UblValidationOptions,
   UblValidationResult,
@@ -55,4 +68,9 @@ export {
   DEFAULT_TAX_TYPE_NAME,
   DEFAULT_UNIT_CODE,
   WITHHOLDING_TAX_TYPE_CODE,
+  WITHHOLDING_TAX_CODES,
+  WITHHOLDING_INVOICE_TYPE_CODES,
+  RETURN_INVOICE_TYPE_CODES,
 } from './constants';
+export type { UblWithholdingTaxCode } from './constants';
+export { roundMoney, roundTo, toMinor, fromMinor, sumInMinor } from './money';

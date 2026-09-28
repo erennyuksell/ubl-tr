@@ -15,16 +15,19 @@ import type {
   UblTransportHandlingUnit,
   UblBuildOptions,
   UblBuildXmlOptions,
+  UblCalcLineResult,
+  UblCalcResult,
   UblInvoiceDocument,
 } from './types';
-import { assertValidUblInvoiceInput } from './validation';
+import { assertValidUblInvoiceInput, calculateForBuild } from './validation';
+import { UblValidationError } from './errors';
 import { toUblXml } from './xml';
+import { PRICE_DECIMALS, roundMoney, roundTo, toMinor } from './money';
 import {
   DEFAULT_UNIT_CODE,
-  DEFAULT_TAX_TYPE_CODE,
   DEFAULT_TAX_TYPE_NAME,
-  WITHHOLDING_TAX_TYPE_CODE,
   TAX_CODE_NAMES,
+  RETURN_INVOICE_TYPE_CODES,
 } from './constants';
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -61,10 +64,10 @@ function threeDigitsToWords(n: number): string {
 
 /** Convert numeric amount to Turkish words: 10500.00 → "Yalnız #On Bin Beş Yüz Türk Lirası#" */
 function amountToWords(val: number, currencyCode = 'TRY'): string {
-  const integer = Math.floor(val);
-  const decimal = Math.round((val - integer) * 100);
-
-  if (integer === 0) return 'Yalnız #Sıfır Türk Lirası#';
+  // Split in minor units: `val - Math.floor(val)` carries float noise (1020.29 → 0.2899...).
+  const minor = Math.abs(toMinor(val));
+  const integer = Math.floor(minor / 100);
+  const decimal = minor % 100;
 
   // Split into groups of 3 digits from right
   const groups: number[] = [];
@@ -74,7 +77,8 @@ function amountToWords(val: number, currencyCode = 'TRY'): string {
     remaining = Math.floor(remaining / 1000);
   }
 
-  let words = '';
+  // 0.50 is "Sıfır Türk Lirası Elli Kuruş", not "Sıfır Türk Lirası".
+  let words = integer === 0 ? 'Sıfır ' : '';
   for (let i = groups.length - 1; i >= 0; i--) {
     const group = groups[i];
     if (!group) continue;
@@ -101,10 +105,21 @@ function amountToWords(val: number, currencyCode = 'TRY'): string {
   return result;
 }
 
-/** Amount object per UBL-TR format */
+/**
+ * Amount object per UBL-TR format, rounded to kuruş half away from zero (4.015 → 4.02).
+ * GİB's schematron allows at most two decimals on the document totals.
+ */
 function amount(value: number, currency: string) {
   return {
-    $value: Number(value.toFixed(2)),
+    $value: roundMoney(value),
+    $attributes: { currencyID: currency },
+  };
+}
+
+/** Unit price object: keeps up to eight decimals. */
+function priceAmount(value: number, currency: string) {
+  return {
+    $value: roundTo(value, PRICE_DECIMALS),
     $attributes: { currencyID: currency },
   };
 }
@@ -221,9 +236,12 @@ function buildParty(party: UblParty): Record<string, unknown> {
 
 // ─── Invoice Line Builder ────────────────────────────────
 
-function buildLine(line: UblInvoiceLine, index: number, currency: string) {
-  const lineExtensionAmount = line.lineAmount;
-  const taxTypeCode = line.taxTypeCode ?? DEFAULT_TAX_TYPE_CODE;
+/**
+ * One InvoiceLine. Every amount comes from `calculateInvoice` (`calc`); the input line gives only
+ * the descriptive fields (name, codes, references, reasons).
+ */
+function buildLine(line: UblInvoiceLine, calc: UblCalcLineResult, index: number, currency: string) {
+  const taxTypeCode = calc.taxTypeCode;
   const taxName = TAX_CODE_NAMES[taxTypeCode] ?? DEFAULT_TAX_TYPE_NAME;
 
   const taxCategory: Record<string, unknown> = {
@@ -277,42 +295,54 @@ function buildLine(line: UblInvoiceLine, index: number, currency: string) {
     item.AdditionalItemProperty = additionalProps;
   }
 
-  // ── AllowanceCharge (discount + surcharge) ────────────
-  const allowanceCharges: Array<Record<string, unknown>> = [];
+  // ── AllowanceCharge: line discount, line surcharge, then document shares ──
+  const allowanceCharges = calc.allowanceCharges.map((ac) => {
+    const reason =
+      ac.reason ??
+      (ac.fromDocument ? undefined : ac.isCharge ? line.surchargeReason : line.discountReason);
+    return {
+      ChargeIndicator: ac.isCharge,
+      ...(reason ? { AllowanceChargeReason: reason } : {}),
+      ...(ac.multiplierFactor != null ? { MultiplierFactorNumeric: ac.multiplierFactor } : {}),
+      Amount: amount(ac.amount, currency),
+      BaseAmount: amount(ac.baseAmount, currency),
+    };
+  });
 
-  // Discount (ChargeIndicator = false)
-  if (line.discount && line.discount > 0) {
-    allowanceCharges.push({
-      ChargeIndicator: false,
-      ...(line.discountReason ? { AllowanceChargeReason: line.discountReason } : {}),
-      MultiplierFactorNumeric: Number(
-        ((line.discount / (line.quantity * line.price)) * 100).toFixed(2),
-      ),
-      Amount: amount(line.discount, currency),
-      BaseAmount: amount(line.quantity * line.price, currency),
-    });
-  }
-
-  // Surcharge (ChargeIndicator = true)
-  if (line.surchargeAmount && line.surchargeAmount > 0) {
-    allowanceCharges.push({
-      ChargeIndicator: true,
-      ...(line.surchargeReason ? { AllowanceChargeReason: line.surchargeReason } : {}),
-      ...(line.surchargeRate ? { MultiplierFactorNumeric: line.surchargeRate } : {}),
-      Amount: amount(line.surchargeAmount, currency),
-      BaseAmount: amount(line.quantity * line.price, currency),
-    });
-  }
+  // ── WithholdingTaxTotal (tevkifat) ────────────────────
+  // TaxableAmount is the VAT the withholding is taken from, not the line net: GİB's viewer
+  // prints it as "Tevkifata Tabi İşlem Üzerinden Hes. KDV".
+  const withholdingTaxTotal =
+    calc.withholdingTaxCode && calc.withholdingTaxAmount > 0
+      ? [
+          {
+            TaxAmount: amount(calc.withholdingTaxAmount, currency),
+            TaxSubtotal: [
+              {
+                TaxableAmount: amount(calc.taxAmount, currency),
+                TaxAmount: amount(calc.withholdingTaxAmount, currency),
+                Percent: calc.withholdingTaxRate,
+                TaxCategory: {
+                  TaxScheme: {
+                    ...(line.withholdingTaxName ? { Name: line.withholdingTaxName } : {}),
+                    TaxTypeCode: calc.withholdingTaxCode,
+                  },
+                },
+              },
+            ],
+          },
+        ]
+      : undefined;
 
   return {
     ID: String(index + 1),
     ...(line.note ? { Note: line.note } : {}),
     InvoicedQuantity: {
-      $value: line.quantity,
+      $value: calc.quantity,
       $attributes: { unitCode: line.unitCode ?? DEFAULT_UNIT_CODE },
     },
-    LineExtensionAmount: amount(lineExtensionAmount, currency),
-    // ── References (XSD position #12-#13, BEFORE AllowanceCharge) ──
+    LineExtensionAmount: amount(calc.lineAmount, currency),
+    // ── References (XSD order: OrderLineReference, DespatchLineReference, Delivery, AllowanceCharge) ──
     ...(line.orderNo
       ? {
           OrderLineReference: [
@@ -339,133 +369,82 @@ function buildLine(line: UblInvoiceLine, index: number, currency: string) {
           ],
         }
       : {}),
-    // ── AllowanceCharge (XSD position #21) ────────────────
-    ...(allowanceCharges.length > 0 ? { AllowanceCharge: allowanceCharges } : {}),
+    // ── Delivery precedes AllowanceCharge in InvoiceLineType ──
     ...(line.delivery ? { Delivery: buildDelivery(line.delivery) } : {}),
+    ...(allowanceCharges.length > 0 ? { AllowanceCharge: allowanceCharges } : {}),
     TaxTotal: {
-      TaxAmount: amount(line.taxAmount, currency),
+      TaxAmount: amount(calc.taxAmount, currency),
       TaxSubtotal: [
         {
-          TaxableAmount: amount(lineExtensionAmount, currency),
-          TaxAmount: amount(line.taxAmount, currency),
-          Percent: line.vatRate,
+          TaxableAmount: amount(calc.lineAmount, currency),
+          TaxAmount: amount(calc.taxAmount, currency),
+          Percent: calc.vatRate,
           TaxCategory: taxCategory,
         },
       ],
     },
+    ...(withholdingTaxTotal ? { WithholdingTaxTotal: withholdingTaxTotal } : {}),
     Item: item,
-    Price: { PriceAmount: amount(line.price, currency) },
+    Price: { PriceAmount: priceAmount(calc.price, currency) },
   };
 }
 
 // ─── Tax Total Builder ───────────────────────────────────
 
-function buildTaxTotal(lines: UblInvoiceLine[], currency: string) {
-  const rateGroups = new Map<
-    string,
-    {
-      taxable: number;
-      tax: number;
-      rate: number;
-      code: string;
-      name: string;
-      exemptionCode?: string;
-      exemptionReason?: string;
-    }
-  >();
-
-  for (const line of lines) {
-    const code = line.taxTypeCode ?? DEFAULT_TAX_TYPE_CODE;
-    const key = `${line.vatRate}_${code}`;
-    const existing = rateGroups.get(key) ?? {
-      taxable: 0,
-      tax: 0,
-      rate: line.vatRate,
-      code,
-      name: TAX_CODE_NAMES[code] ?? DEFAULT_TAX_TYPE_NAME,
-      ...(line.taxExemptionReasonCode ? { exemptionCode: line.taxExemptionReasonCode } : {}),
-      ...(line.taxExemptionReason ? { exemptionReason: line.taxExemptionReason } : {}),
-    };
-    existing.taxable += line.lineAmount;
-    existing.tax += line.taxAmount;
-    rateGroups.set(key, existing);
-  }
-
-  const subtotals = Array.from(rateGroups.values()).map((group) => {
-    const taxCategory: Record<string, unknown> = {
-      TaxScheme: { Name: group.name, TaxTypeCode: group.code },
-    };
-
-    // TaxExemptionReasonCode at header level (ISTISNA)
-    if (group.exemptionCode) {
-      taxCategory.TaxExemptionReasonCode = group.exemptionCode;
-      if (group.exemptionReason) {
-        taxCategory.TaxExemptionReason = group.exemptionReason;
-      }
-    }
-
-    return {
-      TaxableAmount: amount(group.taxable, currency),
-      TaxAmount: amount(group.tax, currency),
-      Percent: group.rate,
-      TaxCategory: taxCategory,
-    };
-  });
-
-  const grossTax = lines.reduce((sum, l) => sum + l.taxAmount, 0);
-  const withholdingTax = lines.reduce((sum, l) => sum + (l.withholdingTaxAmount ?? 0), 0);
-
+/** Document TaxTotal: VAT after withholding, one subtotal per rate group (TEVKIFAT.xml). */
+function buildTaxTotal(calc: UblCalcResult, currency: string) {
   return {
-    TaxAmount: amount(grossTax - withholdingTax, currency),
-    TaxSubtotal: subtotals,
+    TaxAmount: amount(calc.taxTotalAmount, currency),
+    TaxSubtotal: calc.taxSubtotals.map((group) => {
+      const taxCategory: Record<string, unknown> = {
+        TaxScheme: {
+          Name: TAX_CODE_NAMES[group.taxTypeCode] ?? DEFAULT_TAX_TYPE_NAME,
+          TaxTypeCode: group.taxTypeCode,
+        },
+      };
+      // TaxExemptionReasonCode at header level (ISTISNA)
+      if (group.taxExemptionReasonCode) {
+        taxCategory.TaxExemptionReasonCode = group.taxExemptionReasonCode;
+        if (group.taxExemptionReason) taxCategory.TaxExemptionReason = group.taxExemptionReason;
+      }
+      return {
+        TaxableAmount: amount(group.taxableAmount, currency),
+        TaxAmount: amount(group.taxAmount, currency),
+        Percent: group.vatRate,
+        TaxCategory: taxCategory,
+      };
+    }),
   };
 }
 
 // ─── Withholding Tax Total ───────────────────────────────
 
-function buildWithholdingTaxTotal(lines: UblInvoiceLine[], currency: string) {
-  const withholdingLines = lines.filter((l) => (l.withholdingTaxAmount ?? 0) > 0);
-  if (withholdingLines.length === 0) return undefined;
-
-  const rateGroups = new Map<
-    string,
-    { taxable: number; tax: number; rate: number; code: string; name?: string }
-  >();
-
-  for (const line of withholdingLines) {
-    const rate = line.withholdingTaxRate ?? 0;
-    const code = line.withholdingTaxCode ?? WITHHOLDING_TAX_TYPE_CODE;
-    const key = `${rate}_${code}`;
-    const existing = rateGroups.get(key) ?? {
-      taxable: 0,
-      tax: 0,
-      rate,
-      code,
-      ...(line.withholdingTaxName ? { name: line.withholdingTaxName } : {}),
-    };
-    existing.taxable += line.lineAmount;
-    existing.tax += line.withholdingTaxAmount ?? 0;
-    rateGroups.set(key, existing);
-  }
-
-  const totalWithholding = withholdingLines.reduce(
-    (sum, l) => sum + (l.withholdingTaxAmount ?? 0),
-    0,
-  );
+/**
+ * Document-level WithholdingTaxTotal, one subtotal per tevkifat code and rate.
+ * TaxableAmount is the VAT the withholding is taken from (see the line builder).
+ */
+function buildWithholdingTaxTotal(calc: UblCalcResult, lines: UblInvoiceLine[], currency: string) {
+  if (calc.withholdingSubtotals.length === 0) return undefined;
+  const nameOf = (code: string) =>
+    lines.find((line) => line.withholdingTaxCode?.trim() === code && line.withholdingTaxName)
+      ?.withholdingTaxName;
 
   return {
-    TaxAmount: amount(totalWithholding, currency),
-    TaxSubtotal: Array.from(rateGroups.values()).map((group) => ({
-      TaxableAmount: amount(group.taxable, currency),
-      TaxAmount: amount(group.tax, currency),
-      Percent: group.rate,
-      TaxCategory: {
-        TaxScheme: {
-          ...(group.name ? { Name: group.name } : {}),
-          TaxTypeCode: group.code,
+    TaxAmount: amount(calc.withholdingTaxAmount, currency),
+    TaxSubtotal: calc.withholdingSubtotals.map((group) => {
+      const name = nameOf(group.code);
+      return {
+        TaxableAmount: amount(group.taxableAmount, currency),
+        TaxAmount: amount(group.taxAmount, currency),
+        Percent: group.rate,
+        TaxCategory: {
+          TaxScheme: {
+            ...(name ? { Name: name } : {}),
+            TaxTypeCode: group.code,
+          },
         },
-      },
-    })),
+      };
+    }),
   };
 }
 
@@ -646,22 +625,25 @@ export function buildUblInvoice(
   if (options.validate !== false) {
     assertValidUblInvoiceInput(input, options);
   }
+  // Every amount below comes from the calculator. With `validate: false` the header, party and
+  // supplied-amount checks are skipped, but an input the calculator cannot compute (unknown
+  // tevkifat code, withholding without a code, negative amount) still throws: there would be no
+  // correct number to write, and the old `9015` fallback is a document GİB rejects.
+  const { calc, issues } = calculateForBuild(input, options);
+  if (issues.length > 0) throw new UblValidationError(issues);
 
   const currency = input.currency || 'TRY';
-  const isTevkifat = [
-    'TEVKIFAT',
-    'TEVKIFATIADE',
-    'YATIRIMTEVKIFAT',
-    'YATIRIMTEVKIFATIADE',
-  ].includes(input.invoiceTypeCode);
+  // Emitted whenever a line carries withholding; validation rejects it on a type GİB does not
+  // allow it on (SATIS and the like) instead of dropping it and leaving the totals inconsistent.
+  const withholdingTaxTotal = buildWithholdingTaxTotal(calc, input.lines, currency);
 
   // Merge notes[] + description + amount-in-words into Note array
   const allNotes: string[] = [];
   if (input.notes?.length) allNotes.push(...input.notes);
   if (input.description && !allNotes.includes(input.description)) allNotes.push(input.description);
   // Auto-add yazıyla tutar notu (Uyumsoft uyumu)
-  if (input.payableAmount) {
-    allNotes.push(amountToWords(input.payableAmount, input.currency));
+  if (calc.payableAmount) {
+    allNotes.push(amountToWords(calc.payableAmount, input.currency));
   }
 
   return {
@@ -718,7 +700,7 @@ export function buildUblInvoice(
       : {}),
 
     // ── Billing Reference (XSD #29 — IADE → orijinal fatura) ──
-    ...(input.invoiceTypeCode === 'IADE' && input.billingReferenceInvoiceNo
+    ...(RETURN_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode) && input.billingReferenceInvoiceNo
       ? {
           BillingReference: [
             {
@@ -853,18 +835,8 @@ export function buildUblInvoice(
         }
       : {}),
 
-    // ── Header AllowanceCharge (XSD #44) ─────────────
-    ...(input.headerAllowanceCharges?.length
-      ? {
-          AllowanceCharge: input.headerAllowanceCharges.map((ac) => ({
-            ChargeIndicator: ac.isCharge,
-            ...(ac.reason ? { AllowanceChargeReason: ac.reason } : {}),
-            ...(ac.percent != null ? { MultiplierFactorNumeric: ac.percent } : {}),
-            Amount: amount(ac.amount, currency),
-            ...(ac.baseAmount != null ? { BaseAmount: amount(ac.baseAmount, currency) } : {}),
-          })),
-        }
-      : {}),
+    // Document-level allowances and charges are not written here: the calculator spreads them
+    // over the lines, where each share is an AllowanceCharge of the line (and its VAT follows).
 
     // ── Exchange Rate ────────────────────────────────
     ...(input.exchangeRate && currency !== 'TRY'
@@ -886,27 +858,29 @@ export function buildUblInvoice(
       : {}),
 
     // ── Tax Total ────────────────────────────────────
-    TaxTotal: buildTaxTotal(input.lines, currency),
+    TaxTotal: buildTaxTotal(calc, currency),
 
     // ── Withholding Tax Total (TEVKIFAT) ─────────────
-    ...(isTevkifat
-      ? (() => {
-          const wht = buildWithholdingTaxTotal(input.lines, currency);
-          return wht ? { WithholdingTaxTotal: [wht] } : {};
-        })()
-      : {}),
+    ...(withholdingTaxTotal ? { WithholdingTaxTotal: [withholdingTaxTotal] } : {}),
 
     // ── Legal Monetary Total ─────────────────────────
     LegalMonetaryTotal: {
-      LineExtensionAmount: amount(input.taxExclusiveAmount + input.discount, currency),
-      TaxExclusiveAmount: amount(input.taxExclusiveAmount, currency),
-      TaxInclusiveAmount: amount(input.payableAmount, currency),
-      AllowanceTotalAmount: amount(input.discount, currency),
-      PayableAmount: amount(input.payableAmount, currency),
+      // Before discounts, as in GİB's TicariFaturaOrnegi.xml (26003.40 = 25216.50 + 786.90).
+      // Surcharges stay inside it: GİB's viewer shows no ChargeTotalAmount.
+      LineExtensionAmount: amount(calc.lineExtensionAmount, currency),
+      TaxExclusiveAmount: amount(calc.taxExclusiveAmount, currency),
+      // TEVKIFAT.xml: TaxInclusiveAmount 23600 (full VAT), PayableAmount 20360 (withholding off).
+      TaxInclusiveAmount: amount(calc.taxInclusiveAmount, currency),
+      AllowanceTotalAmount: amount(calc.allowanceTotalAmount, currency),
+      // UBL 2.1 order: PayableRoundingAmount right before PayableAmount, only when there is one.
+      ...(calc.payableRoundingAmount !== 0
+        ? { PayableRoundingAmount: amount(calc.payableRoundingAmount, currency) }
+        : {}),
+      PayableAmount: amount(calc.payableAmount, currency),
     },
 
     // ── Invoice Lines ────────────────────────────────
-    InvoiceLine: input.lines.map((line, i) => buildLine(line, i, currency)),
+    InvoiceLine: input.lines.map((line, i) => buildLine(line, calc.lines[i]!, i, currency)),
   } as UblInvoiceDocument;
 }
 

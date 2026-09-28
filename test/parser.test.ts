@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { InvoiceParser } from '../src';
+import { InvoiceParser, buildUblInvoiceXml, calculateInvoiceTotals } from '../src';
+import type { UblInvoiceInput, UblInvoiceLine } from '../src';
 
 const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
@@ -91,5 +92,108 @@ describe('InvoiceParser', () => {
       price: 1000,
       lineAmount: 1000,
     });
+  });
+});
+
+describe('InvoiceParser round trip', () => {
+  const party = {
+    vkn: '1234567890',
+    title: 'Supplier A.S.',
+    taxOffice: 'Istanbul',
+    address: {
+      street: 'Example Street',
+      district: 'Kadikoy',
+      city: 'Istanbul',
+      country: 'Turkiye',
+    },
+  };
+  const lines: UblInvoiceLine[] = [
+    {
+      name: 'İskontolu hizmet',
+      quantity: 12,
+      price: 825.5,
+      discount: 495.3,
+      discountReason: 'Kampanya',
+      lineAmount: 9410.7,
+      vatRate: 20,
+      taxAmount: 1882.14,
+    },
+    {
+      name: 'Artırımlı hizmet',
+      quantity: 1,
+      price: 900,
+      surchargeRate: 10,
+      surchargeAmount: 90,
+      lineAmount: 990,
+      vatRate: 20,
+      taxAmount: 198,
+    },
+    {
+      name: 'Yapı denetim',
+      quantity: 1,
+      price: 1234.75,
+      lineAmount: 1234.75,
+      vatRate: 20,
+      taxAmount: 246.95,
+      withholdingTaxCode: '608',
+      withholdingTaxRate: 90,
+      withholdingTaxAmount: 222.26,
+    },
+  ];
+  const input: UblInvoiceInput = {
+    invoiceNo: 'ABC2026000000001',
+    issueDate: new Date('2026-05-25T09:00:00+03:00'),
+    profileId: 'TICARIFATURA',
+    invoiceTypeCode: 'TEVKIFAT',
+    currency: 'TRY',
+    ...calculateInvoiceTotals(lines),
+    supplier: party,
+    customer: { ...party, vkn: '1111111111', title: 'Customer Ltd.' },
+    lines,
+  };
+
+  it('reads line discounts, surcharges and withholding back', () => {
+    const parsed = new InvoiceParser().parse(buildUblInvoiceXml(input));
+
+    expect(parsed.lines[0]).toMatchObject({
+      discount: 495.3,
+      surchargeAmount: 0,
+      withholdings: [],
+    });
+    expect(parsed.lines[0]?.allowanceCharges).toEqual([
+      {
+        isCharge: false,
+        reason: 'Kampanya',
+        multiplierFactor: 0.05,
+        amount: 495.3,
+        baseAmount: 9906,
+      },
+    ]);
+    expect(parsed.lines[1]).toMatchObject({ discount: 0, surchargeAmount: 90 });
+    expect(parsed.lines[1]?.allowanceCharges[0]).toMatchObject({
+      isCharge: true,
+      multiplierFactor: 0.1,
+    });
+    expect(parsed.lines[2]?.withholdings).toEqual([
+      { taxableAmount: 246.95, taxAmount: 222.26, percent: 90, taxCode: '608', taxName: '' },
+    ]);
+    expect(parsed.lines[2]?.taxes[0]).toMatchObject({ taxAmount: 246.95, percent: 20 });
+  });
+
+  it('reads the document withholding and monetary totals', () => {
+    const parsed = new InvoiceParser().parse(buildUblInvoiceXml(input));
+
+    expect(parsed.totals).toMatchObject({
+      lineExtensionAmount: 12130.75,
+      taxExclusiveAmount: 11635.45,
+      allowanceTotalAmount: 495.3,
+      taxInclusiveAmount: 13962.54,
+      taxAmount: 2104.83,
+      withholdingTaxAmount: 222.26,
+      payableAmount: 13740.28,
+    });
+    expect(parsed.totals.withholdingTaxSubtotals).toEqual([
+      { taxableAmount: 246.95, taxAmount: 222.26, percent: 90, taxCode: '608', taxName: '' },
+    ]);
   });
 });

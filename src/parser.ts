@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { fromMinor, sumInMinor } from './money';
 
 interface ParsedXmlNode {
   [key: string]: unknown;
@@ -24,6 +25,16 @@ interface ParsedTaxSubtotal {
   taxName: string;
 }
 
+/** AllowanceCharge: an iskonto (`isCharge: false`) or an artırım (`isCharge: true`). */
+interface ParsedAllowanceCharge {
+  isCharge: boolean;
+  reason: string;
+  /** MultiplierFactorNumeric as written: a fraction, 0.05 for 5%. 0 when absent. */
+  multiplierFactor: number;
+  amount: number;
+  baseAmount: number;
+}
+
 export interface InvoiceExtractedData {
   id: string;
   uuid: string;
@@ -44,11 +55,21 @@ export interface InvoiceExtractedData {
     address: ParsedAddress;
   };
   totals: {
+    /** LegalMonetaryTotal/LineExtensionAmount: before line discounts. */
+    lineExtensionAmount: number;
     taxExclusiveAmount: number;
+    /** Net plus the full VAT, withholding not taken off. */
     taxInclusiveAmount: number;
+    allowanceTotalAmount: number;
+    /** LegalMonetaryTotal/PayableRoundingAmount, 0 when absent. */
+    payableRoundingAmount: number;
     payableAmount: number;
+    /** TaxTotal/TaxAmount: VAT after withholding. */
     taxAmount: number;
     taxSubtotals: ParsedTaxSubtotal[];
+    /** Document WithholdingTaxTotal/TaxAmount, 0 without withholding. */
+    withholdingTaxAmount: number;
+    withholdingTaxSubtotals: ParsedTaxSubtotal[];
   };
   lines: Array<{
     id: string;
@@ -57,7 +78,15 @@ export interface InvoiceExtractedData {
     unitCode: string;
     price: number;
     lineAmount: number;
+    /** Sum of the line's allowances (iskonto). */
+    discount: number;
+    /** Sum of the line's charges (artırım). */
+    surchargeAmount: number;
+    allowanceCharges: ParsedAllowanceCharge[];
+    /** Line TaxTotal subtotals: VAT before withholding. */
     taxes: ParsedTaxSubtotal[];
+    /** Line WithholdingTaxTotal subtotals (tevkifat): code, percent and withheld amount. */
+    withholdings: ParsedTaxSubtotal[];
   }>;
 }
 
@@ -105,6 +134,15 @@ function safeGetNum(value: unknown): number {
   return 0;
 }
 
+/** Sum of money amounts, added in kuruş so that float noise does not accumulate. */
+function sumAmounts(values: number[]): number {
+  return fromMinor(sumInMinor(values));
+}
+
+function safeGetBool(value: unknown): boolean {
+  return safeGetStr(value).trim().toLowerCase() === 'true';
+}
+
 function emptyAddress(): ParsedAddress {
   return {
     street: '',
@@ -135,7 +173,13 @@ export class InvoiceParser {
         skipLike: /.*/,
       },
       isArray: (name) =>
-        ['InvoiceLine', 'TaxSubtotal', 'AllowanceCharge', 'PartyIdentification'].includes(name),
+        [
+          'InvoiceLine',
+          'TaxSubtotal',
+          'AllowanceCharge',
+          'PartyIdentification',
+          'WithholdingTaxTotal',
+        ].includes(name),
     });
   }
 
@@ -213,13 +257,23 @@ export class InvoiceParser {
   private parseTotals(root: ParsedXmlNode): InvoiceExtractedData['totals'] {
     const monetaryTotal = childNode(root, 'LegalMonetaryTotal') ?? {};
     const taxTotal = childNode(root, 'TaxTotal') ?? {};
+    const withholdingTotals = asArray(child(root, 'WithholdingTaxTotal')).filter(isNode);
 
     return {
+      lineExtensionAmount: safeGetNum(child(monetaryTotal, 'LineExtensionAmount')),
       taxExclusiveAmount: safeGetNum(child(monetaryTotal, 'TaxExclusiveAmount')),
       taxInclusiveAmount: safeGetNum(child(monetaryTotal, 'TaxInclusiveAmount')),
+      allowanceTotalAmount: safeGetNum(child(monetaryTotal, 'AllowanceTotalAmount')),
+      payableRoundingAmount: safeGetNum(child(monetaryTotal, 'PayableRoundingAmount')),
       payableAmount: safeGetNum(child(monetaryTotal, 'PayableAmount')),
       taxAmount: safeGetNum(child(taxTotal, 'TaxAmount')),
       taxSubtotals: this.parseTaxSubtotals(child(taxTotal, 'TaxSubtotal')),
+      withholdingTaxAmount: sumAmounts(
+        withholdingTotals.map((total) => safeGetNum(child(total, 'TaxAmount'))),
+      ),
+      withholdingTaxSubtotals: withholdingTotals.flatMap((total) =>
+        this.parseTaxSubtotals(child(total, 'TaxSubtotal')),
+      ),
     };
   }
 
@@ -231,6 +285,10 @@ export class InvoiceParser {
         const taxTotal = childNode(line, 'TaxTotal') ?? {};
         const item = childNode(line, 'Item') ?? {};
         const price = childNode(line, 'Price') ?? {};
+        const allowanceCharges = this.parseAllowanceCharges(child(line, 'AllowanceCharge'));
+        const withholdings = asArray(child(line, 'WithholdingTaxTotal'))
+          .filter(isNode)
+          .flatMap((total) => this.parseTaxSubtotals(child(total, 'TaxSubtotal')));
 
         return {
           id: safeGetStr(child(line, 'ID')),
@@ -239,9 +297,29 @@ export class InvoiceParser {
           unitCode: safeGetStr(child(quantityNode, '@_unitCode')),
           price: safeGetNum(child(price, 'PriceAmount')),
           lineAmount: safeGetNum(child(line, 'LineExtensionAmount')),
+          discount: sumAmounts(
+            allowanceCharges.filter((ac) => !ac.isCharge).map((ac) => ac.amount),
+          ),
+          surchargeAmount: sumAmounts(
+            allowanceCharges.filter((ac) => ac.isCharge).map((ac) => ac.amount),
+          ),
+          allowanceCharges,
           taxes: this.parseTaxSubtotals(child(taxTotal, 'TaxSubtotal')),
+          withholdings,
         };
       });
+  }
+
+  private parseAllowanceCharges(value: unknown): ParsedAllowanceCharge[] {
+    return asArray(value)
+      .filter(isNode)
+      .map((ac) => ({
+        isCharge: safeGetBool(child(ac, 'ChargeIndicator')),
+        reason: safeGetStr(child(ac, 'AllowanceChargeReason')),
+        multiplierFactor: safeGetNum(child(ac, 'MultiplierFactorNumeric')),
+        amount: safeGetNum(child(ac, 'Amount')),
+        baseAmount: safeGetNum(child(ac, 'BaseAmount')),
+      }));
   }
 
   private parseTaxSubtotals(value: unknown): ParsedTaxSubtotal[] {

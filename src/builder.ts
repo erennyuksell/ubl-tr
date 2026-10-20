@@ -28,6 +28,7 @@ import {
   DEFAULT_TAX_TYPE_NAME,
   TAX_CODE_NAMES,
   RETURN_INVOICE_TYPE_CODES,
+  BUYER_PARTY_TYPES,
 } from './constants';
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -162,7 +163,16 @@ function buildExchangeRate(
 
 // ─── Party Builder ───────────────────────────────────────
 
-function buildParty(party: UblParty): Record<string, unknown> {
+/** One `cac:PartyIdentification`. */
+function identification(value: string, schemeID: string) {
+  return { ID: { $value: value, $attributes: { schemeID } } };
+}
+
+/**
+ * A party. `partyType` is GİB's `PARTYTYPE` for a foreign buyer (EXPORT, TAXFREE); a party without a
+ * VKN/TCKN gets no empty VKN line, and one without a title or tax office gets no empty name or scheme.
+ */
+function buildParty(party: UblParty, partyType?: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   // WebsiteURI
@@ -170,25 +180,25 @@ function buildParty(party: UblParty): Record<string, unknown> {
     result.WebsiteURI = party.webSiteUri;
   }
 
-  // PartyIdentification — primary VKN/TCKN + additional IDs (MERSISNO, TICARETSICILNO, etc.)
-  const identifications: Array<Record<string, unknown>> = [
-    { ID: { $value: party.vkn, $attributes: { schemeID: schemeId(party.vkn) } } },
-  ];
-  if (party.additionalIds?.length) {
-    for (const aid of party.additionalIds) {
-      identifications.push({ ID: { $value: aid.value, $attributes: { schemeID: aid.schemeID } } });
-    }
+  // PartyIdentification — primary VKN/TCKN, party type, additional IDs (MERSISNO, TICARETSICILNO, etc.)
+  const additionalIds = party.additionalIds ?? [];
+  const identifications: Array<Record<string, unknown>> = [];
+  const vkn = party.vkn?.trim() ?? '';
+  if (vkn) identifications.push(identification(vkn, schemeId(vkn)));
+  if (partyType && !additionalIds.some((aid) => aid.schemeID === 'PARTYTYPE')) {
+    identifications.push(identification(partyType, 'PARTYTYPE'));
   }
+  for (const aid of additionalIds) identifications.push(identification(aid.value, aid.schemeID));
   result.PartyIdentification = identifications;
 
   // PartyName
-  result.PartyName = { Name: party.title };
+  if (party.title?.trim()) result.PartyName = { Name: party.title };
 
   // PostalAddress — GİB zorunlu (pre-flight validation garantiler)
   result.PostalAddress = buildPostalAddress(party.address!);
 
-  // PartyTaxScheme — GİB zorunlu
-  result.PartyTaxScheme = { TaxScheme: { Name: party.taxOffice! } };
+  // PartyTaxScheme — required by validation on supplier and customer, absent on a foreign buyer
+  if (party.taxOffice?.trim()) result.PartyTaxScheme = { TaxScheme: { Name: party.taxOffice } };
 
   // PartyLegalEntity
   if (party.legalEntity) {
@@ -219,10 +229,16 @@ function buildParty(party: UblParty): Record<string, unknown> {
   }
 
   // Person (TCKN kişiler)
+  // PersonType order: FirstName, FamilyName, NationalityID, IdentityDocumentReference.
   if (party.person) {
+    const { firstName, familyName, nationalityId, passport } = party.person;
     result.Person = {
-      FirstName: party.person.firstName,
-      FamilyName: party.person.familyName,
+      FirstName: firstName,
+      FamilyName: familyName,
+      ...(nationalityId ? { NationalityID: nationalityId } : {}),
+      ...(passport
+        ? { IdentityDocumentReference: { ID: passport.id, IssueDate: passport.issueDate } }
+        : {}),
     };
   }
 
@@ -803,7 +819,23 @@ export function buildUblInvoice(
     ...(input.buyerCustomer
       ? {
           BuyerCustomerParty: {
-            Party: buildParty(input.buyerCustomer),
+            Party: buildParty(input.buyerCustomer, BUYER_PARTY_TYPES[input.profileId]),
+          },
+        }
+      : {}),
+
+    // ── Tax representative (YOLCUBERABERFATURA aracı kurum) ──
+    ...(input.taxRepresentative
+      ? {
+          TaxRepresentativeParty: {
+            PartyIdentification: [
+              identification(input.taxRepresentative.vkn, 'ARACIKURUMVKN'),
+              identification(input.taxRepresentative.alias, 'ARACIKURUMETIKET'),
+            ],
+            ...(input.taxRepresentative.title
+              ? { PartyName: { Name: input.taxRepresentative.title } }
+              : {}),
+            PostalAddress: buildPostalAddress(input.taxRepresentative.address),
           },
         }
       : {}),

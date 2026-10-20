@@ -387,12 +387,13 @@ describe('validation of identifiers and text', () => {
     expect(paths({ ...input, customer: { ...input.customer, vkn: '2222222222' } })).toEqual([]);
   });
 
-  it('does not hold a foreign buyer (export, tax free) to the Turkish party rules', () => {
-    const input = withLines(lines);
+  it('does not hold a foreign buyer to the Turkish party rules', () => {
+    const input = withLines(lines, { profileId: 'IHRACAT', invoiceTypeCode: 'ISTISNA' });
     const buyerCustomer = {
       vkn: '',
       title: 'Foreign Buyer Ltd.',
       address: { city: 'Berlin', country: 'Almanya' },
+      legalEntity: { registrationName: 'Foreign Buyer Ltd.' },
     };
     expect(paths({ ...input, buyerCustomer })).toEqual([]);
   });
@@ -464,5 +465,72 @@ describe('validation of the profile and the invoice type', () => {
     expect(
       paths(withLines(lines, { profileId: 'YENIPROFIL', invoiceTypeCode: 'YENITIP' })),
     ).toEqual([]);
+  });
+});
+
+describe('validation of the buyer of an export or a tax-free sale', () => {
+  const lines = [vatLine(1000, 20, 200)];
+  const address = { city: 'London', country: 'Great Britain' };
+  const exportInput = (buyerCustomer?: UblInvoiceInput['buyerCustomer']) =>
+    withLines(lines, {
+      profileId: 'IHRACAT',
+      invoiceTypeCode: 'ISTISNA',
+      ...(buyerCustomer ? { buyerCustomer } : {}),
+    });
+  const tourist = {
+    vkn: '',
+    title: '',
+    address,
+    person: {
+      firstName: 'John',
+      familyName: 'Doe',
+      nationalityId: 'GB',
+      passport: { id: 'P1234567', issueDate: '2024-01-14' },
+    },
+  };
+  const taxRepresentative = {
+    vkn: '1234567890',
+    alias: 'urn:mail:yolcuberaberpk@ornek.com.tr',
+    address: { city: 'İstanbul', country: 'Türkiye' },
+  };
+  const taxFreeInput = (extra: Partial<UblInvoiceInput>) =>
+    withLines(lines, { profileId: 'YOLCUBERABERFATURA', invoiceTypeCode: 'SATIS', ...extra });
+
+  it('needs the foreign buyer and its official name on an export', () => {
+    expect(paths(exportInput())).toEqual(['buyerCustomer']);
+    expect(paths(exportInput({ vkn: '', title: 'Buyer', address }))).toEqual([
+      'buyerCustomer.legalEntity.registrationName',
+    ]);
+  });
+
+  it('needs the tourist, the nationality, the passport and the intermediary on a tax-free sale', () => {
+    expect(paths(taxFreeInput({ buyerCustomer: tourist, taxRepresentative }))).toEqual([]);
+    expect(paths(taxFreeInput({ buyerCustomer: tourist }))).toEqual(['taxRepresentative']);
+    expect(
+      paths(
+        taxFreeInput({
+          buyerCustomer: {
+            ...tourist,
+            person: { firstName: 'John', familyName: 'Doe', nationalityId: 'XX' },
+          },
+          taxRepresentative: { ...taxRepresentative, vkn: '1111111111', alias: ' ' },
+        }),
+      ),
+    ).toEqual([
+      'buyerCustomer.person.nationalityId',
+      'buyerCustomer.person.passport',
+      'taxRepresentative.vkn',
+      'taxRepresentative.alias',
+    ]);
+  });
+
+  it('still needs an identification on a buyer of any other profile', () => {
+    const input = withLines(lines);
+    expect(paths({ ...input, buyerCustomer: { vkn: '', title: 'X', address } })).toEqual([
+      'buyerCustomer.vkn',
+    ]);
+    expect(paths({ ...input, buyerCustomer: { vkn: '1234567890', title: 'X', address } })).toEqual(
+      [],
+    );
   });
 });

@@ -67,6 +67,13 @@ const base = (extra: Partial<UblInvoiceInput> = {}): UblInvoiceInput => ({
   ...extra,
 });
 
+const customsAuthority = {
+  vkn: '1460415308',
+  title: 'Gümrük ve Ticaret Bakanlığı Gümrükler Genel Müdürlüğü Bilgi İşlem Dairesi Başkanlığı',
+  taxOffice: 'Ulus',
+  address: { city: 'Ankara', country: 'Türkiye' },
+};
+
 const VARIANTS: Array<[string, UblInvoiceInput]> = [
   ['plain sale', base()],
   [
@@ -136,6 +143,56 @@ const VARIANTS: Array<[string, UblInvoiceInput]> = [
     }),
   ],
   ['foreign currency', base({ currency: 'USD', exchangeRate: 32.5, pricingCurrencyCode: 'USD' })],
+  [
+    'export to a foreign buyer',
+    base({
+      profileId: 'IHRACAT',
+      invoiceTypeCode: 'ISTISNA',
+      currency: 'USD',
+      exchangeRate: 32.5,
+      customer: customsAuthority,
+      buyerCustomer: {
+        vkn: '',
+        title: 'Farthing Purchasing Consortium',
+        address: { city: 'Bridgtow', country: 'Great Britain' },
+        legalEntity: {
+          registrationName: 'Farthing Purchasing Consortium',
+          companyId: '175 269 2355',
+        },
+      },
+      lines: [
+        line({
+          vatRate: 0,
+          taxAmount: 0,
+          taxExemptionReasonCode: '301',
+          taxExemptionReason: '11/1-a Mal ihracatı',
+        }),
+      ],
+    }),
+  ],
+  [
+    'tax-free sale to a tourist',
+    base({
+      profileId: 'YOLCUBERABERFATURA',
+      customer: customsAuthority,
+      buyerCustomer: {
+        vkn: '',
+        title: '',
+        address: { city: 'London', country: 'Great Britain' },
+        person: {
+          firstName: 'John',
+          familyName: 'Doe',
+          nationalityId: 'GB',
+          passport: { id: 'P1234567', issueDate: '2024-01-14' },
+        },
+      },
+      taxRepresentative: {
+        vkn: '1234567890',
+        alias: 'urn:mail:yolcuberaberpk@ornek.com.tr',
+        address: { city: 'İstanbul', country: 'Türkiye' },
+      },
+    }),
+  ],
   [
     'e-Arşiv internet sale',
     base({

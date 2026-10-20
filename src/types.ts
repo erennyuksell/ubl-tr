@@ -236,6 +236,13 @@ export interface UblContact {
 export interface UblPerson {
   firstName: string;
   familyName: string;
+  /**
+   * Nationality as a country code from GİB's list (`COUNTRY_CODES`, e.g. `GB`). Required for
+   * the tourist of a tax-free invoice (YOLCUBERABERFATURA).
+   */
+  nationalityId?: string;
+  /** The passport of a tax-free invoice's tourist: its number and issue date (YYYY-MM-DD). */
+  passport?: { id: string; issueDate: string };
 }
 
 /**
@@ -282,7 +289,11 @@ export interface UblPartyIdentification {
  * Full coverage of all Party fields used in GİB official examples.
  */
 export interface UblParty {
-  vkn: string; // VKN (10) or TCKN (11) — primary ID
+  /**
+   * VKN (10) or TCKN (11), the primary ID. '' for a foreign buyer (`buyerCustomer` of an IHRACAT or
+   * YOLCUBERABERFATURA invoice), who is identified by GİB's party type instead.
+   */
+  vkn: string;
   title: string;
   taxOffice?: string;
   address?: UblAddress;
@@ -292,6 +303,18 @@ export interface UblParty {
   legalEntity?: UblLegalEntity;
   agentParty?: UblParty; // Temsilci / acente
   additionalIds?: UblPartyIdentification[]; // MERSISNO, TICARETSICILNO vb.
+}
+
+/**
+ * The intermediary (aracı kurum) of a tax-free invoice (YOLCUBERABERFATURA): GİB requires its VKN and
+ * its GİB alias (etiket) on `cac:TaxRepresentativeParty`.
+ */
+export interface UblTaxRepresentative {
+  vkn: string;
+  /** Its GİB alias, such as `urn:mail:yolcuberaberpk@ornek.com.tr`. */
+  alias: string;
+  address: UblAddress;
+  title?: string;
 }
 
 // ─── Financial Account ───────────────────────────────────
@@ -424,7 +447,14 @@ export interface UblInvoiceInput {
   // ── Parties ──────────────────────────────────────
   supplier: UblParty;
   customer: UblParty;
+  /**
+   * The foreign buyer of an IHRACAT invoice (its official name in `legalEntity.registrationName`) or the
+   * tourist of a YOLCUBERABERFATURA invoice (`person` with nationality and passport). `customer` is then
+   * the customs authority. The party type GİB asks for (EXPORT, TAXFREE) is written from the profile.
+   */
   buyerCustomer?: UblParty;
+  /** The intermediary of a YOLCUBERABERFATURA invoice. */
+  taxRepresentative?: UblTaxRepresentative;
 
   // ── Optional fields ──────────────────────────────
   description?: string; // Eski uyumluluk — notes[] ile birleşir

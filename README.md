@@ -466,6 +466,8 @@ It checks:
   `SARJ`/`SARJANLIK` only under `ENERJI` or `EARSIVFATURA`, and `ENERJI`, `ILAC_TIBBICIHAZ`,
   `YATIRIMTESVIK`, `IDIS` only with their own types. Codes the schematron does not pair are left
   alone.
+- The buyer of an export or a tax-free sale (see "Export and tax-free buyers"); a buyer under any
+  other profile needs a VKN/TCKN or another identification.
 - Supplier/customer VKN/TCKN: 10 or 11 digits with matching check digits (`isValidTaxId`). GİB's
   placeholders `11111111111` (final consumer) and `2222222222` (foreign buyer) are accepted.
 - No string holds a character XML 1.0 cannot carry (a C0 control other than tab, line feed and
@@ -716,7 +718,7 @@ Supplier, customer, buyer, carrier, or related party.
 
 ```ts
 type UblParty = {
-  vkn: string; // 10-digit VKN or 11-digit TCKN
+  vkn: string; // 10-digit VKN or 11-digit TCKN; '' for a foreign buyer
   title: string;
   taxOffice?: string;
   address?: UblAddress;
@@ -752,6 +754,35 @@ const person = {
   address: { city: 'Istanbul', country: 'Turkiye' },
 };
 ```
+
+#### Export and tax-free buyers
+
+An export (`IHRACAT`) and a tax-free sale to a tourist (`YOLCUBERABERFATURA`) are addressed to the
+customs authority (`customer`, VKN `1460415308`); the foreign buyer goes in `buyerCustomer`, without a
+VKN or tax office. The builder writes the party type GİB asks for (`PARTYTYPE` `EXPORT` or `TAXFREE`,
+see `BUYER_PARTY_TYPES`), and validation checks what GİB's schematron requires of each:
+
+- `IHRACAT`: the buyer's official name in `legalEntity.registrationName`.
+- `YOLCUBERABERFATURA`: the tourist's `person` with `firstName`, `familyName`, `nationalityId` (a code
+  from `COUNTRY_CODES`) and `passport` (`id`, `issueDate`), and the intermediary in
+  `taxRepresentative` (`vkn`, GİB `alias`, `address`).
+
+```ts
+const exportInvoice = {
+  profileId: 'IHRACAT',
+  invoiceTypeCode: 'ISTISNA',
+  customer: customsAuthority,
+  buyerCustomer: {
+    vkn: '',
+    title: 'Farthing Purchasing Consortium',
+    address: { city: 'Bridgtow', country: 'Great Britain' },
+    legalEntity: { registrationName: 'Farthing Purchasing Consortium', companyId: '175 269 2355' },
+  },
+  // ...
+};
+```
+
+Other export rules (GTİP, delivery terms, transport mode on the lines) are not checked yet.
 
 ### `UblAddress`
 

@@ -477,3 +477,57 @@ describe('buildUblInvoice withholding (GİB TEVKIFAT.xml)', () => {
     );
   });
 });
+
+describe('buildUblInvoice foreign buyer', () => {
+  const buyerOf = (input: UblInvoiceInput) => {
+    const invoice = buildUblInvoice(input) as unknown as Record<
+      string,
+      { Party: Record<string, unknown> }
+    >;
+    return invoice.BuyerCustomerParty?.Party ?? {};
+  };
+  const exportInput: UblInvoiceInput = {
+    ...baseInput,
+    profileId: 'IHRACAT',
+    invoiceTypeCode: 'ISTISNA',
+    taxAmount: 0,
+    payableAmount: 1000,
+    lines: [
+      {
+        name: 'Mal',
+        quantity: 1,
+        price: 1000,
+        lineAmount: 1000,
+        vatRate: 0,
+        taxAmount: 0,
+        taxExemptionReasonCode: '301',
+        taxExemptionReason: '11/1-a Mal ihracatı',
+      },
+    ],
+    buyerCustomer: {
+      vkn: '',
+      title: 'Farthing Purchasing Consortium',
+      address: { city: 'Bridgtow', country: 'Great Britain' },
+      legalEntity: { registrationName: 'Farthing Purchasing Consortium' },
+    },
+  };
+
+  it('writes the EXPORT party type and no empty VKN or tax office', () => {
+    const party = buyerOf(exportInput);
+    expect(party.PartyIdentification).toEqual([
+      { ID: { $value: 'EXPORT', $attributes: { schemeID: 'PARTYTYPE' } } },
+    ]);
+    expect(party).not.toHaveProperty('PartyTaxScheme');
+  });
+
+  it('keeps a party type the caller already gave', () => {
+    const party = buyerOf({
+      ...exportInput,
+      buyerCustomer: {
+        ...exportInput.buyerCustomer!,
+        additionalIds: [{ schemeID: 'PARTYTYPE', value: 'EXPORT' }],
+      },
+    });
+    expect(party.PartyIdentification).toHaveLength(1);
+  });
+});

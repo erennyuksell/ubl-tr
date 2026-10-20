@@ -36,6 +36,7 @@ export type {
   UblPartyIdentification,
   // Payment
   UblBillingReference,
+  UblTaxRepresentative,
   UblFinancialAccount,
   UblPaymentMeans,
   // Delivery & Shipment (İhracat)
@@ -82,6 +83,8 @@ export {
   RETURN_INVOICE_TYPE_CODES,
   PROFILE_INVOICE_TYPE_CODES,
   INVOICE_TYPE_PROFILE_IDS,
+  BUYER_PARTY_TYPES,
+  COUNTRY_CODES,
 } from './constants';
 export type { UblWithholdingTaxCode } from './constants';
 export { roundMoney, roundTo, toMinor, fromMinor, sumInMinor } from './money';

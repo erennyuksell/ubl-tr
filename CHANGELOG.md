@@ -2,6 +2,26 @@
 
 All notable changes to this package will be documented in this file.
 
+## 0.4.1
+
+### Fixed
+
+- A buyer without a VKN (the foreign buyer of an export or a tax-free sale) got an empty
+  `cbc:ID schemeID="VKN"` and an empty tax scheme. A party now gets a VKN/TCKN line only when it has
+  one, and no empty name or tax scheme.
+
+### Added
+
+- The party type GİB requires on the buyer: `PARTYTYPE` `EXPORT` on an `IHRACAT` invoice and
+  `TAXFREE` on a `YOLCUBERABERFATURA` invoice, written from the profile (`BUYER_PARTY_TYPES`).
+- `person.nationalityId` and `person.passport` (written as `NationalityID` and
+  `IdentityDocumentReference`), and `taxRepresentative`, the intermediary of a tax-free sale (written
+  as `TaxRepresentativeParty` with `ARACIKURUMVKN` and `ARACIKURUMETIKET`).
+- `COUNTRY_CODES`, GİB's country code list.
+- Validation of the buyer as GİB's schematron asks: the official name on an export; the tourist's
+  name, nationality and passport and the intermediary on a tax-free sale. A buyer under another
+  profile needs an identification. The schema test covers both invoices.
+
 ## 0.4.0
 
 The XML now passes GİB's UBL-TR 1.2.1 schema, which 0.3.0's did not (its elements had no

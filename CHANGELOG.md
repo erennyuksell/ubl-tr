@@ -2,6 +2,40 @@
 
 All notable changes to this package will be documented in this file.
 
+## 0.5.0
+
+Validation now follows GİB's whole e-Fatura schematron (package of 2026-08-21), not a few of its rules:
+all 299 rules are classified in `docs/gib-schematron-coverage.md`, the input rules are checked before
+building, and a test runs GİB's own schematron on one invoice of each kind. Several checks reject input
+0.4.1 accepted (and GİB refused), hence the minor version.
+
+### Added
+
+- `src/gib-codelists.ts`, GİB's code lists, generated from GİB's code list file by
+  `scripts/generate-gib-codelists.mjs` and exported (`GIB_INVOICE_TYPE_CODES`, `CURRENCY_CODES`,
+  `TAX_EXEMPTION_REASON_CODES`, `PAYMENT_MEANS_CODES`, `DELIVERY_TERM_CODES`, ...).
+- `test/schematron.test.ts`: GİB's schematron on eleven invoice kinds, with Saxon-HE and SchXslt
+  (`scripts/fetch-schematron-tools.sh`, `UBL_TR_SCHEMATRON`).
+- `docs/gib-schematron-coverage.md` and `scripts/schematron-coverage.mjs`, which flags a rule GİB adds.
+
+### Changed
+
+- Codes are checked against GİB's lists: profile, invoice type, currencies, party identification
+  schemes, tax types, exemption codes, payment means, delivery terms, transport modes, package types.
+- The invoice number must have GİB's format; a UUID must be a UUID; an invoice not in TRY needs the
+  exchange rate (at most 6 decimals).
+- A TCKN party needs `person.firstName` and `person.familyName`, as GİB requires; the final consumer
+  `11111111111` included.
+- An exemption code needs its reason text and an invoice type that allows it; a zero VAT needs an
+  exemption outside the types that carry none; 555 only on a taxed sale under the general profiles.
+- A `KAMU` invoice needs a Turkish IBAN; an export line needs its delivery terms, address, transport
+  mode and GTİP; an invoice to the customs authority is an export or a tax-free sale.
+- `HKS`, `ENERJI`, `YATIRIMTESVIK`, `IDIS`, `ILAC_TIBBICIHAZ`, `SARJ`, `SARJANLIK`,
+  `TEKNOLOJIDESTEK`, the `YTB*` types and exemption 702 on `IHRACKAYITLI` are refused
+  (`UNSUPPORTED_PROFILE_IDS`, `UNSUPPORTED_INVOICE_TYPE_CODES`): their GİB rules need fields ubl-tr
+  cannot write yet, so 0.4.1 built invoices GİB refused.
+- `COUNTRY_CODES` moved to the generated lists (same export).
+
 ## 0.4.1
 
 ### Fixed

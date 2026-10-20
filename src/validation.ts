@@ -1,17 +1,10 @@
-import {
-  BUYER_PARTY_TYPES,
-  COUNTRY_CODES,
-  INVOICE_TYPE_PROFILE_IDS,
-  PROFILE_INVOICE_TYPE_CODES,
-  RETURN_INVOICE_TYPE_CODES,
-  WITHHOLDING_INVOICE_TYPE_CODES,
-} from './constants';
+import { RETURN_INVOICE_TYPE_CODES, WITHHOLDING_INVOICE_TYPE_CODES } from './constants';
+import { checkGibRules } from './gib-rules';
+import { addIssue, checkAddress, checkTaxId, isBlank } from './validation-helpers';
 import { computeInvoice } from './calc';
 import { UblValidationError } from './errors';
 import { toMinor } from './money';
-import { isValidTaxId } from './identity';
 import type {
-  UblAddress,
   UblBillingReference,
   UblCalcResult,
   UblCalculatedTotals,
@@ -60,124 +53,6 @@ export function returnReferences(input: UblInvoiceInput): UblBillingReference[] 
     );
 }
 
-/** The invoice type against the profile, both ways, as GİB's schematron pairs them. */
-function checkProfileAndType(input: UblInvoiceInput, issues: UblValidationIssue[]): void {
-  const { profileId, invoiceTypeCode } = input;
-  if (isBlank(profileId) || isBlank(invoiceTypeCode)) return;
-  const typesOfProfile = PROFILE_INVOICE_TYPE_CODES[profileId];
-  const profilesOfType = INVOICE_TYPE_PROFILE_IDS[invoiceTypeCode];
-  if (typesOfProfile && !typesOfProfile.includes(invoiceTypeCode)) {
-    addIssue(
-      issues,
-      'invoiceTypeCode',
-      `${profileId} allows only ${typesOfProfile.join(', ')}, not ${invoiceTypeCode}.`,
-    );
-  } else if (profilesOfType && !profilesOfType.includes(profileId)) {
-    addIssue(
-      issues,
-      'profileId',
-      `${invoiceTypeCode} can be issued only under ${profilesOfType.join(', ')}, not ${profileId}.`,
-    );
-  }
-}
-
-/** A VKN/TCKN: 10 or 11 digits with matching check digits. */
-function checkTaxId(vkn: string, path: string, issues: UblValidationIssue[]): void {
-  if (!/^\d{10}$|^\d{11}$/.test(vkn)) {
-    addIssue(issues, path, 'VKN must be 10 digits or TCKN must be 11 digits.');
-  } else if (!isValidTaxId(vkn)) {
-    addIssue(issues, path, 'VKN/TCKN check digits do not match; the number is mistyped.');
-  }
-}
-
-function checkAddress(
-  address: UblAddress | undefined,
-  path: string,
-  issues: UblValidationIssue[],
-): void {
-  if (!address) {
-    addIssue(issues, path, 'Postal address is required.');
-    return;
-  }
-  if (isBlank(address.city)) addIssue(issues, `${path}.city`, 'City is required.');
-  if (isBlank(address.country)) addIssue(issues, `${path}.country`, 'Country is required.');
-}
-
-/**
- * The buyer of an export or a tax-free sale, as GİB's schematron asks for it: an IHRACAT invoice names
- * the foreign buyer with its official name, a YOLCUBERABERFATURA invoice the tourist (name, nationality,
- * passport) and the intermediary (VKN and GİB alias). A foreign buyer has no VKN or tax office.
- */
-function checkBuyer(input: UblInvoiceInput, issues: UblValidationIssue[]): void {
-  const { buyerCustomer: buyer, profileId } = input;
-  const partyType = BUYER_PARTY_TYPES[profileId];
-  if (!buyer) {
-    if (partyType)
-      addIssue(issues, 'buyerCustomer', `${profileId} needs the buyer (${partyType}).`);
-  } else {
-    checkAddress(buyer.address, 'buyerCustomer.address', issues);
-    if (buyer.vkn?.trim()) checkTaxId(buyer.vkn.trim(), 'buyerCustomer.vkn', issues);
-    // cac:PartyIdentification is required: outside these profiles nothing writes the party type.
-    if (!partyType && isBlank(buyer.vkn) && !buyer.additionalIds?.length) {
-      addIssue(
-        issues,
-        'buyerCustomer.vkn',
-        'A buyer needs a VKN/TCKN or another identification outside IHRACAT and YOLCUBERABERFATURA.',
-      );
-    }
-  }
-
-  if (profileId === 'IHRACAT' && buyer && isBlank(buyer.legalEntity?.registrationName)) {
-    addIssue(
-      issues,
-      'buyerCustomer.legalEntity.registrationName',
-      "IHRACAT needs the buyer's official name.",
-    );
-  }
-
-  if (profileId === 'YOLCUBERABERFATURA') {
-    const person = buyer?.person;
-    if (buyer && (!person || isBlank(person.firstName) || isBlank(person.familyName))) {
-      addIssue(
-        issues,
-        'buyerCustomer.person',
-        "YOLCUBERABERFATURA needs the tourist's first and family name.",
-      );
-    }
-    if (person && !COUNTRY_CODES.includes(person.nationalityId ?? '')) {
-      addIssue(
-        issues,
-        'buyerCustomer.person.nationalityId',
-        "Nationality must be a country code from GİB's list (COUNTRY_CODES).",
-      );
-    }
-    if (
-      person &&
-      (isBlank(person.passport?.id) ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(person.passport?.issueDate ?? ''))
-    ) {
-      addIssue(
-        issues,
-        'buyerCustomer.person.passport',
-        'The passport number and its issue date (YYYY-MM-DD) are required.',
-      );
-    }
-    const representative = input.taxRepresentative;
-    if (!representative) {
-      addIssue(
-        issues,
-        'taxRepresentative',
-        'YOLCUBERABERFATURA needs the intermediary (aracı kurum).',
-      );
-    } else {
-      checkTaxId(representative.vkn.trim(), 'taxRepresentative.vkn', issues);
-      if (isBlank(representative.alias))
-        addIssue(issues, 'taxRepresentative.alias', "The intermediary's GİB alias is required.");
-      checkAddress(representative.address, 'taxRepresentative.address', issues);
-    }
-  }
-}
-
 /** Every string in the input that holds a character XML cannot carry, by its path. */
 function checkXmlText(value: unknown, path: string, issues: UblValidationIssue[]): void {
   if (typeof value === 'string') {
@@ -194,14 +69,6 @@ function checkXmlText(value: unknown, path: string, issues: UblValidationIssue[]
     for (const [key, child] of Object.entries(value))
       checkXmlText(child, path ? `${path}.${key}` : key, issues);
   }
-}
-
-function isBlank(value: string | undefined): boolean {
-  return value == null || value.trim() === '';
-}
-
-function addIssue(issues: UblValidationIssue[], path: string, message: string): void {
-  issues.push({ path, message });
 }
 
 function validateParty(party: UblParty, path: string, issues: UblValidationIssue[]): void {
@@ -338,15 +205,14 @@ export function validateUblInvoiceInput(
   if (isBlank(input.invoiceTypeCode))
     addIssue(issues, 'invoiceTypeCode', 'InvoiceTypeCode is required.');
 
-  checkProfileAndType(input, issues);
   validateParty(input.supplier, 'supplier', issues);
   validateParty(input.customer, 'customer', issues);
-  checkBuyer(input, issues);
   checkXmlText(input, '', issues);
 
   const { calc, issues: calcIssues } = calculateForBuild(input, options);
   issues.push(...calcIssues);
   checkGivenAmounts(input, calc, issues);
+  checkGibRules(input, calc, options, issues);
 
   if (
     calc.lines.some((line) => line.withholdingTaxCode) &&

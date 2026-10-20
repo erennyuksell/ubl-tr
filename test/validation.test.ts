@@ -43,6 +43,7 @@ const validInput: UblInvoiceInput = {
   customer: {
     vkn: '11111111111',
     title: 'Customer Name',
+    person: { firstName: 'Customer', familyName: 'Name' },
     taxOffice: 'Istanbul',
     address: {
       street: 'Customer Street',
@@ -140,6 +141,13 @@ function paths(input: UblInvoiceInput, options?: Parameters<typeof validateUblIn
   return validateUblInvoiceInput(input, options).issues.map((issue) => issue.path);
 }
 
+/** What an export line carries: delivery terms, address, transport mode and GTİP. */
+const exportDelivery = {
+  deliveryTerms: 'FOB',
+  address: { city: 'Bridgtow', country: 'Great Britain' },
+  shipment: { transportModeCode: '1', goodsItems: [{ requiredCustomsId: '847130000000' }] },
+};
+
 const vatLine = (lineAmount: number, vatRate: number, taxAmount: number): UblInvoiceLine => ({
   name: 'Hizmet',
   quantity: 1,
@@ -202,7 +210,11 @@ describe('validation of supplied amounts (exact, no tolerance)', () => {
       'payableAmount',
     ]);
     // Float noise in the totals is not a difference.
-    const noisy = withLines([vatLine(0.1, 0, 0), vatLine(0.2, 0, 0)]);
+    const exempt = { taxExemptionReasonCode: '351', taxExemptionReason: 'Diğerleri' };
+    const noisy = withLines([
+      { ...vatLine(0.1, 0, 0), ...exempt },
+      { ...vatLine(0.2, 0, 0), ...exempt },
+    ]);
     expect(paths({ ...noisy, taxExclusiveAmount: 0.1 + 0.2, payableAmount: 0.1 + 0.2 })).toEqual(
       [],
     );
@@ -334,7 +346,7 @@ describe('validation of return invoices', () => {
   const returnLines = [vatLine(1000, 20, 200)];
 
   it("requires the returned invoice's 16-character number on every return type", () => {
-    for (const invoiceTypeCode of ['IADE', 'TEVKIFATIADE', 'YTBIADE', 'YTBTEVKIFATIADE']) {
+    for (const invoiceTypeCode of ['IADE', 'TEVKIFATIADE']) {
       expect(paths(withLines(returnLines, { invoiceTypeCode }))).toEqual(['billingReferences']);
       expect(
         paths(withLines(returnLines, { invoiceTypeCode, billingReferenceInvoiceNo: 'IADE-ABC-1' })),
@@ -388,7 +400,10 @@ describe('validation of identifiers and text', () => {
   });
 
   it('does not hold a foreign buyer to the Turkish party rules', () => {
-    const input = withLines(lines, { profileId: 'IHRACAT', invoiceTypeCode: 'ISTISNA' });
+    const input = withLines(
+      lines.map((line) => ({ ...line, delivery: exportDelivery })),
+      { profileId: 'IHRACAT', invoiceTypeCode: 'ISTISNA' },
+    );
     const buyerCustomer = {
       vkn: '',
       title: 'Foreign Buyer Ltd.',
@@ -433,37 +448,22 @@ describe('validation of the profile and the invoice type', () => {
     expect(paths(input('EARSIVFATURA'))).toEqual([]);
   });
 
-  it('keeps the restricted profiles to their own types', () => {
-    expect(paths(withLines(lines, { profileId: 'IDIS', invoiceTypeCode: 'OZELMATRAH' }))).toEqual([
-      'invoiceTypeCode',
-    ]);
-    expect(paths(withLines(lines, { profileId: 'ENERJI', invoiceTypeCode: 'SATIS' }))).toEqual([
-      'invoiceTypeCode',
-    ]);
-    expect(
-      paths(withLines(lines, { profileId: 'YATIRIMTESVIK', invoiceTypeCode: 'SATIS' })),
-    ).toEqual([]);
+  it('refuses the profiles and types whose GİB fields ubl-tr cannot write yet', () => {
+    for (const profileId of ['HKS', 'ENERJI', 'YATIRIMTESVIK', 'IDIS', 'ILAC_TIBBICIHAZ']) {
+      expect(paths(withLines(lines, { profileId }))).toEqual(['profileId']);
+    }
+    for (const invoiceTypeCode of ['SARJ', 'SARJANLIK', 'TEKNOLOJIDESTEK', 'YTBSATIS']) {
+      expect(paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode }))).toEqual([
+        'invoiceTypeCode',
+      ]);
+    }
   });
 
-  it('needs ENERJI or e-Arşiv for a charging invoice, e-Arşiv for TEKNOLOJIDESTEK', () => {
-    expect(paths(withLines(lines, { profileId: 'TEMELFATURA', invoiceTypeCode: 'SARJ' }))).toEqual([
-      'profileId',
-    ]);
-    expect(paths(withLines(lines, { profileId: 'ENERJI', invoiceTypeCode: 'SARJ' }))).toEqual([]);
-    expect(
-      paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'SARJANLIK' })),
-    ).toEqual([]);
-    expect(
-      paths(withLines(lines, { profileId: 'TICARIFATURA', invoiceTypeCode: 'TEKNOLOJIDESTEK' })),
-    ).toEqual(['profileId']);
-  });
-
-  it('leaves profiles and types the schematron does not pair alone', () => {
+  it("refuses a profile or a type that is not in GİB's lists", () => {
+    expect(paths(withLines(lines, { profileId: 'TICARI' }))).toEqual(['profileId']);
+    expect(paths(withLines(lines, { invoiceTypeCode: 'SATISS' }))).toEqual(['invoiceTypeCode']);
     expect(
       paths(withLines(lines, { profileId: 'TICARIFATURA', invoiceTypeCode: 'ISTISNA' })),
-    ).toEqual([]);
-    expect(
-      paths(withLines(lines, { profileId: 'YENIPROFIL', invoiceTypeCode: 'YENITIP' })),
     ).toEqual([]);
   });
 });
@@ -472,11 +472,14 @@ describe('validation of the buyer of an export or a tax-free sale', () => {
   const lines = [vatLine(1000, 20, 200)];
   const address = { city: 'London', country: 'Great Britain' };
   const exportInput = (buyerCustomer?: UblInvoiceInput['buyerCustomer']) =>
-    withLines(lines, {
-      profileId: 'IHRACAT',
-      invoiceTypeCode: 'ISTISNA',
-      ...(buyerCustomer ? { buyerCustomer } : {}),
-    });
+    withLines(
+      lines.map((line) => ({ ...line, delivery: exportDelivery })),
+      {
+        profileId: 'IHRACAT',
+        invoiceTypeCode: 'ISTISNA',
+        ...(buyerCustomer ? { buyerCustomer } : {}),
+      },
+    );
   const tourist = {
     vkn: '',
     title: '',
@@ -532,5 +535,186 @@ describe('validation of the buyer of an export or a tax-free sale', () => {
     expect(paths({ ...input, buyerCustomer: { vkn: '1234567890', title: 'X', address } })).toEqual(
       [],
     );
+  });
+});
+
+describe("validation of GİB's schematron input rules", () => {
+  const lines = [vatLine(1000, 20, 200)];
+  const exempt = (code: string, extra: Partial<UblInvoiceLine> = {}): UblInvoiceLine => ({
+    ...vatLine(1000, 0, 0),
+    taxExemptionReasonCode: code,
+    taxExemptionReason: 'Gerekçe',
+    ...extra,
+  });
+
+  it('checks the invoice number, the UUID and the currencies', () => {
+    expect(paths(withLines(lines, { invoiceNo: 'AB2026000000001' }))).toEqual(['invoiceNo']);
+    expect(
+      paths(withLines(lines, { invoiceNo: 'ABC' }), { providerAssignedInvoiceNo: true }),
+    ).toEqual([]);
+    expect(paths(withLines(lines, { uuid: 'not-a-uuid' }))).toEqual(['uuid']);
+    expect(paths(withLines(lines, { currency: 'TL', exchangeRate: 1 }))).toEqual(['currency']);
+    expect(paths(withLines(lines, { currency: 'USD' }))).toEqual(['exchangeRate']);
+    expect(paths(withLines(lines, { currency: 'USD', exchangeRate: 32.1234567 }))).toEqual([
+      'exchangeRate',
+    ]);
+    expect(paths(withLines(lines, { currency: 'USD', exchangeRate: 32.5 }))).toEqual([]);
+  });
+
+  it('checks party identification schemes and the person of a TCKN party', () => {
+    const input = withLines(lines);
+    expect(
+      paths({
+        ...input,
+        customer: { ...input.customer, additionalIds: [{ schemeID: 'MERSIS', value: '1' }] },
+      }),
+    ).toEqual(['customer.additionalIds[0].schemeID']);
+    expect(
+      paths({
+        ...input,
+        customer: { ...input.customer, additionalIds: [{ schemeID: 'MERSISNO', value: '1' }] },
+      }),
+    ).toEqual([]);
+    expect(
+      paths({
+        ...input,
+        customer: { ...input.customer, person: { firstName: '', familyName: 'Name' } },
+      }),
+    ).toEqual(['customer.person']);
+  });
+
+  it('keeps an invoice to the customs authority to export, tax-free, special and public profiles', () => {
+    const input = withLines(lines);
+    expect(
+      paths({
+        ...input,
+        customer: {
+          vkn: '1460415308',
+          title: 'Gümrük',
+          taxOffice: 'Ulus',
+          address: { city: 'Ankara', country: 'Türkiye' },
+        },
+      }),
+    ).toEqual(['profileId']);
+  });
+
+  it('checks tax types and exemptions against the invoice type', () => {
+    expect(paths(withLines([{ ...vatLine(1000, 20, 200), taxTypeCode: '9999' }]))).toEqual([
+      'lines[0].taxTypeCode',
+    ]);
+    expect(
+      paths(withLines([exempt('301', { taxExemptionReason: '' })], { invoiceTypeCode: 'ISTISNA' })),
+    ).toEqual(['lines[0].taxExemptionReason']);
+    expect(paths(withLines([exempt('999')], { invoiceTypeCode: 'ISTISNA' }))).toEqual([
+      'lines[0].taxExemptionReasonCode',
+    ]);
+    expect(paths(withLines([exempt('301')]))).toEqual(['lines[0].taxExemptionReasonCode']);
+    expect(paths(withLines([exempt('301')], { invoiceTypeCode: 'ISTISNA' }))).toEqual([]);
+    expect(paths(withLines([exempt('801')]))).toEqual(['lines[0].taxExemptionReasonCode']);
+    expect(paths(withLines([exempt('701')]))).toEqual(['lines[0].taxExemptionReasonCode']);
+    expect(paths(withLines([exempt('702')], { invoiceTypeCode: 'IHRACKAYITLI' }))).toEqual([
+      'lines[0].taxExemptionReasonCode',
+    ]);
+  });
+
+  it('asks a reason for a zero VAT outside the types that carry none', () => {
+    expect(paths(withLines([vatLine(1000, 0, 0)]))).toEqual(['lines[0].taxExemptionReason']);
+    expect(
+      paths(
+        withLines([vatLine(1000, 0, 0)], {
+          invoiceTypeCode: 'IADE',
+          billingReferences: [{ invoiceNo: 'ABC2026000000009' }],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('allows 555 (demirbaş KDV) only on a taxed sale under the general profiles', () => {
+    expect(
+      paths(
+        withLines([
+          {
+            ...vatLine(1000, 20, 200),
+            taxExemptionReasonCode: '555',
+            taxExemptionReason: 'Demirbaş',
+          },
+        ]),
+      ),
+    ).toEqual([]);
+    expect(paths(withLines([exempt('555')]))).toEqual(['lines[0].vatRate']);
+    expect(
+      paths(
+        withLines(
+          [
+            {
+              ...vatLine(1000, 20, 200),
+              taxExemptionReasonCode: '555',
+              taxExemptionReason: 'Demirbaş',
+            },
+          ],
+          {
+            profileId: 'KAMU',
+            paymentMeans: { code: '42', financialAccount: { iban: 'TR330006100519786457841326' } },
+          },
+        ),
+      ),
+    ).toEqual(['lines[0].taxExemptionReasonCode']);
+  });
+
+  it('checks payment means codes and the IBAN of a public invoice', () => {
+    expect(paths(withLines(lines, { paymentMeans: { code: '99' } }))).toEqual([
+      'paymentMeans.code',
+    ]);
+    expect(paths(withLines(lines, { profileId: 'KAMU' }))).toEqual([
+      'paymentMeans.financialAccount.iban',
+    ]);
+    expect(
+      paths(
+        withLines(lines, {
+          profileId: 'KAMU',
+          paymentMeans: {
+            code: '42',
+            financialAccount: { iban: 'TR33 0006 1005 1978 6457 8413 26' },
+          },
+        }),
+      ),
+    ).toEqual(['paymentMeans.financialAccount.iban']);
+  });
+
+  it('checks delivery codes and what an export line needs', () => {
+    expect(
+      paths(
+        withLines(lines, {
+          delivery: { deliveryTerms: 'XYZ', shipment: { transportModeCode: '12' } },
+        }),
+      ),
+    ).toEqual(['delivery.deliveryTerms', 'delivery.shipment.transportModeCode']);
+    const input = withLines(lines, { profileId: 'IHRACAT', invoiceTypeCode: 'ISTISNA' });
+    const buyerCustomer = {
+      vkn: '',
+      title: 'B',
+      address: { city: 'X', country: 'Y' },
+      legalEntity: { registrationName: 'B' },
+    };
+    expect(paths({ ...input, buyerCustomer })).toEqual([
+      'lines[0].delivery.deliveryTerms',
+      'lines[0].delivery.address',
+      'lines[0].delivery.shipment.transportModeCode',
+      'lines[0].delivery.shipment.goodsItems[0].requiredCustomsId',
+    ]);
+    const onInvoice = {
+      deliveryTerms: 'FOB',
+      address: { city: 'X', country: 'Y' },
+      shipment: { transportModeCode: '1' },
+    };
+    const gtip = { shipment: { goodsItems: [{ requiredCustomsId: '847130000000' }] } };
+    expect(
+      paths({
+        ...input,
+        buyerCustomer,
+        delivery: onInvoice,
+        lines: input.lines.map((line) => ({ ...line, delivery: gtip })),
+      }),
+    ).toEqual([]);
   });
 });

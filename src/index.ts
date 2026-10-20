@@ -84,7 +84,8 @@ export {
   PROFILE_INVOICE_TYPE_CODES,
   INVOICE_TYPE_PROFILE_IDS,
   BUYER_PARTY_TYPES,
-  COUNTRY_CODES,
 } from './constants';
+export { UNSUPPORTED_PROFILE_IDS, UNSUPPORTED_INVOICE_TYPE_CODES } from './gib-rules';
+export * from './gib-codelists';
 export type { UblWithholdingTaxCode } from './constants';
 export { roundMoney, roundTo, toMinor, fromMinor, sumInMinor } from './money';

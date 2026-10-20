@@ -36,6 +36,7 @@ const input: UblInvoiceInput = {
   customer: {
     vkn: '11111111111',
     title: 'Customer Name',
+    person: { firstName: 'Customer', familyName: 'Name' },
     taxOffice: 'Istanbul',
     address: {
       street: 'Customer Street',

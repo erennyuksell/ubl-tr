@@ -27,6 +27,7 @@ const baseInput: UblInvoiceInput = {
   customer: {
     vkn: '11111111111',
     title: 'Customer Name',
+    person: { firstName: 'Customer', familyName: 'Name' },
     taxOffice: 'Istanbul',
     address: {
       street: 'Customer Street',
@@ -75,6 +76,7 @@ describe('buildUblInvoice', () => {
       customer: {
         vkn: '11111111111',
         title: 'Customer Name',
+        person: { firstName: 'Customer', familyName: 'Name' },
         taxOffice: 'Istanbul',
         address: {
           street: 'Customer Street',
@@ -399,6 +401,7 @@ describe('buildUblInvoice amounts', () => {
       vatRate: 0,
       taxAmount: 0,
       taxExemptionReasonCode: '351',
+      taxExemptionReason: 'Diğerleri',
     };
     const invoice = buildUblInvoice(inputWith([line]));
     expect(invoice.Note).toEqual(['Yalnız #Sıfır Türk Lirası Elli Kuruş#']);
@@ -502,6 +505,11 @@ describe('buildUblInvoice foreign buyer', () => {
         taxAmount: 0,
         taxExemptionReasonCode: '301',
         taxExemptionReason: '11/1-a Mal ihracatı',
+        delivery: {
+          deliveryTerms: 'FOB',
+          address: { city: 'Bridgtow', country: 'Great Britain' },
+          shipment: { transportModeCode: '1', goodsItems: [{ requiredCustomsId: '847130000000' }] },
+        },
       },
     ],
     buyerCustomer: {

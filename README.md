@@ -456,9 +456,30 @@ type UblValidationResult = {
 };
 ```
 
-It checks:
+It checks the input rules of GİB's e-Fatura schematron (package of 2026-08-21, in `src/gib-rules.ts`;
+`docs/gib-schematron-coverage.md` lists all 299 rules of the file and where each is checked), and:
 
 - Required header fields: `invoiceNo`, `issueDate`, `profileId`, `invoiceTypeCode`.
+- Codes against GİB's own lists (`src/gib-codelists.ts`, generated from GİB's code list): profile,
+  invoice type, currencies, party identification schemes, tax types, exemption codes, payment
+  means, delivery terms, transport modes, package types, nationality.
+- The GİB invoice number format (`ABC2026000000001`; with `providerAssignedInvoiceNo`, also blank or
+  the 3-character series), a UUID in UUID format, an exchange rate (at most 6 decimals) on every
+  invoice not in TRY.
+- A TCKN party (11 digits, the final consumer `11111111111` included) needs `person.firstName` and
+  `person.familyName`. An invoice to the customs authority (`1460415308`) is an export, a tax-free
+  sale, `OZELFATURA` or `KAMU`.
+- Exemptions: every exemption code needs its reason text and a type that allows it (ISTISNA codes
+  on `ISTISNA`, 8xx on `OZELMATRAH`, 7xx on `IHRACKAYITLI`, each also on `IADE` and `SGK`); a zero
+  VAT needs an exemption outside `IADE`, `IHRACKAYITLI`, `OZELMATRAH`, `SGK`, `KONAKLAMAVERGISI`;
+  555 (demirbaş KDV) only on a taxed `TEMELFATURA`, `TICARIFATURA` or `EARSIVFATURA` sale.
+- A `KAMU` invoice is paid to a Turkish IBAN written without spaces.
+- An export line has its delivery terms, delivery address and transport mode (on the line or the
+  invoice) and its GTİP number.
+- Profiles and types whose GİB fields ubl-tr cannot write yet are refused
+  (`UNSUPPORTED_PROFILE_IDS`: `HKS`, `ENERJI`, `YATIRIMTESVIK`, `IDIS`, `ILAC_TIBBICIHAZ`;
+  `UNSUPPORTED_INVOICE_TYPE_CODES`: `SARJ`, `SARJANLIK`, `TEKNOLOJIDESTEK`, `YTB*`; and exemption
+  702 on `IHRACKAYITLI`), so no invoice GİB would refuse is built.
 - The profile and the invoice type, as GİB's e-Fatura schematron pairs them
   (`INVOICE_TYPE_PROFILE_IDS`, `PROFILE_INVOICE_TYPE_CODES`): an `IADE` only under `TEMELFATURA`,
   `EARSIVFATURA`, `ILAC_TIBBICIHAZ`, `YATIRIMTESVIK`, `IDIS` or `KAMU` (so a return of a
@@ -639,7 +660,7 @@ Common `invoiceTypeCode` values:
 - `IHRACKAYITLI`
 - `SGK`
 
-The package accepts strings for these fields because GIB/provider lists may change. Validate your allowed business values in your own application if needed.
+Validation checks these fields against GİB's lists (`GIB_EFATURA_PROFILE_IDS`, `GIB_EARCHIVE_PROFILE_IDS`, `GIB_INVOICE_TYPE_CODES`). When GİB publishes a new package, `scripts/generate-gib-codelists.mjs` regenerates them.
 
 ### `UblInvoiceLine`
 
@@ -1064,6 +1085,23 @@ points at `xsdrt/maindoc/UBL-Invoice-2.1.xsd` of GİB's UBL-TR package:
 
 ```bash
 UBL_TR_XSD=/path/to/UBL-TR-1.2.1-Paketi/xsdrt/maindoc/UBL-Invoice-2.1.xsd npm test
+```
+
+`test/schematron.test.ts` runs GİB's whole e-Fatura schematron (all 299 rules) on the same invoices,
+with Saxon-HE and SchXslt (Java needed). Fetch the tools once, then point `UBL_TR_SCHEMATRON` at the
+`schematron` folder of GİB's e-Fatura package:
+
+```bash
+./scripts/fetch-schematron-tools.sh
+UBL_TR_SCHEMATRON=/path/to/e-FaturaPaketi/schematron npm test
+```
+
+When GİB publishes a new package, regenerate the code lists and the coverage table, and classify any
+new rule the coverage script reports:
+
+```bash
+node scripts/generate-gib-codelists.mjs /path/to/e-FaturaPaketi/schematron/UBL-TR_Codelist.xml 2026-08-21
+node scripts/schematron-coverage.mjs /path/to/e-FaturaPaketi/schematron 2026-08-21
 ```
 
 ## Scope And Disclaimer

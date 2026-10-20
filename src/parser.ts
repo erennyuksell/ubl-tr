@@ -1,5 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
 import { fromMinor, sumInMinor } from './money';
+import { UblParseError } from './errors';
+
+/** A DOCTYPE or ENTITY declaration anywhere in the document (case-insensitive, whitespace allowed after `<!`). */
+const DECLARATION = /<!\s*(?:DOCTYPE|ENTITY)\b/i;
 
 interface ParsedXmlNode {
   [key: string]: unknown;
@@ -35,6 +39,24 @@ interface ParsedAllowanceCharge {
   baseAmount: number;
 }
 
+interface ParsedBillingReference {
+  /** InvoiceDocumentReference/ID: the referred invoice's number. */
+  invoiceNo: string;
+  issueDate: string;
+  documentTypeCode: string;
+}
+
+interface ParsedPaymentMeans {
+  code: string;
+  dueDate: string;
+  /** PayeeFinancialAccount/ID: an IBAN or an account number, '' when absent. */
+  iban: string;
+  currencyCode: string;
+  paymentNote: string;
+  bankName: string;
+  branchName: string;
+}
+
 export interface InvoiceExtractedData {
   id: string;
   uuid: string;
@@ -42,6 +64,12 @@ export interface InvoiceExtractedData {
   invoiceTypeCode: string;
   profileId: string;
   currency: string;
+  /** Document-level `cbc:Note` texts, in order, empty ones left out. Free text the seller wrote (references, remarks). */
+  notes: string[];
+  /** BillingReference: the invoices this one refers to, as a return does to the invoices it returns. */
+  billingReferences: ParsedBillingReference[];
+  /** PaymentMeans: how and where the buyer pays (IBAN, due date). */
+  paymentMeans: ParsedPaymentMeans[];
   supplier: {
     name: string;
     taxId: string;
@@ -74,6 +102,8 @@ export interface InvoiceExtractedData {
   lines: Array<{
     id: string;
     name: string;
+    /** The line's `cbc:Note` texts, empty ones left out. */
+    notes: string[];
     quantity: number;
     unitCode: string;
     price: number;
@@ -143,6 +173,27 @@ function safeGetBool(value: unknown): boolean {
   return safeGetStr(value).trim().toLowerCase() === 'true';
 }
 
+function noteTexts(value: unknown): string[] {
+  return asArray(value)
+    .map(safeGetStr)
+    .map((note) => note.trim())
+    .filter(Boolean);
+}
+
+function parsePaymentMeans(node: ParsedXmlNode): ParsedPaymentMeans {
+  const account = childNode(node, 'PayeeFinancialAccount') ?? {};
+  const branch = childNode(account, 'FinancialInstitutionBranch') ?? {};
+  return {
+    code: safeGetStr(child(node, 'PaymentMeansCode')),
+    dueDate: safeGetStr(child(node, 'PaymentDueDate')),
+    iban: safeGetStr(child(account, 'ID')).replace(/\s+/g, ''),
+    currencyCode: safeGetStr(child(account, 'CurrencyCode')),
+    paymentNote: safeGetStr(child(account, 'PaymentNote')),
+    bankName: safeGetStr(child(childNode(branch, 'FinancialInstitution'), 'Name')),
+    branchName: safeGetStr(child(branch, 'Name')),
+  };
+}
+
 function emptyAddress(): ParsedAddress {
   return {
     street: '',
@@ -179,11 +230,21 @@ export class InvoiceParser {
           'AllowanceCharge',
           'PartyIdentification',
           'WithholdingTaxTotal',
+          'Note',
+          'BillingReference',
+          'PaymentMeans',
         ].includes(name),
     });
   }
 
+  /** @throws UblParseError when the document declares a DOCTYPE or an ENTITY. */
   public parse(xmlContent: string): InvoiceExtractedData {
+    if (DECLARATION.test(xmlContent)) {
+      throw new UblParseError(
+        'doctype-not-allowed',
+        'XML documents with a DOCTYPE or ENTITY declaration are not parsed.',
+      );
+    }
     const parsed = this.parser.parse(xmlContent) as unknown;
     const root = childNode(parsed, 'Invoice') ?? (isNode(parsed) ? parsed : {});
 
@@ -194,6 +255,16 @@ export class InvoiceParser {
       invoiceTypeCode: safeGetStr(child(root, 'InvoiceTypeCode')),
       profileId: safeGetStr(child(root, 'ProfileID')),
       currency: safeGetStr(child(root, 'DocumentCurrencyCode')),
+      notes: noteTexts(child(root, 'Note')),
+      billingReferences: asArray(child(root, 'BillingReference'))
+        .map((reference) => childNode(reference, 'InvoiceDocumentReference'))
+        .filter(isNode)
+        .map((document) => ({
+          invoiceNo: safeGetStr(child(document, 'ID')),
+          issueDate: safeGetStr(child(document, 'IssueDate')),
+          documentTypeCode: safeGetStr(child(document, 'DocumentTypeCode')),
+        })),
+      paymentMeans: asArray(child(root, 'PaymentMeans')).filter(isNode).map(parsePaymentMeans),
 
       supplier: this.parseParty(child(childNode(root, 'AccountingSupplierParty'), 'Party')),
       customer: this.parseParty(child(childNode(root, 'AccountingCustomerParty'), 'Party')),
@@ -293,6 +364,7 @@ export class InvoiceParser {
         return {
           id: safeGetStr(child(line, 'ID')),
           name: safeGetStr(child(item, 'Name')),
+          notes: noteTexts(child(line, 'Note')),
           quantity: safeGetNum(quantityNode),
           unitCode: safeGetStr(child(quantityNode, '@_unitCode')),
           price: safeGetNum(child(price, 'PriceAmount')),

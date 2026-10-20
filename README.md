@@ -403,6 +403,10 @@ type UblXmlOptions = {
 
 Use custom namespaces only if your provider requires a special wrapper or namespace override.
 
+Element names are written with the prefixes GİB's schema expects: `cbc:` for a value, `cac:` for an
+element with children, `ext:` for `UBLExtensions`. A name you give with a prefix is kept. The
+`ext:ExtensionContent` is left empty: it is the signature's place, filled when the provider signs.
+
 ### `calculateInvoiceTotals(lines)` (deprecated)
 
 Deprecated: use `calculateInvoice`, which returns every amount. Kept for callers of 0.2; it now
@@ -455,7 +459,17 @@ type UblValidationResult = {
 It checks:
 
 - Required header fields: `invoiceNo`, `issueDate`, `profileId`, `invoiceTypeCode`.
-- Supplier/customer VKN/TCKN format.
+- The profile and the invoice type, as GİB's e-Fatura schematron pairs them
+  (`INVOICE_TYPE_PROFILE_IDS`, `PROFILE_INVOICE_TYPE_CODES`): an `IADE` only under `TEMELFATURA`,
+  `EARSIVFATURA`, `ILAC_TIBBICIHAZ`, `YATIRIMTESVIK`, `IDIS` or `KAMU` (so a return of a
+  `TICARIFATURA` invoice is issued as `TEMELFATURA`), `TEKNOLOJIDESTEK` only under `EARSIVFATURA`,
+  `SARJ`/`SARJANLIK` only under `ENERJI` or `EARSIVFATURA`, and `ENERJI`, `ILAC_TIBBICIHAZ`,
+  `YATIRIMTESVIK`, `IDIS` only with their own types. Codes the schematron does not pair are left
+  alone.
+- Supplier/customer VKN/TCKN: 10 or 11 digits with matching check digits (`isValidTaxId`). GİB's
+  placeholders `11111111111` (final consumer) and `2222222222` (foreign buyer) are accepted.
+- No string holds a character XML 1.0 cannot carry (a C0 control other than tab, line feed and
+  carriage return, often from pasted text); the issue names the field.
 - Supplier/customer title, tax office, city, and country.
 - At least one invoice line, and every input the calculator needs (quantity above zero,
   non-negative price, discounts and surcharges, a discount no larger than its line).
@@ -465,7 +479,8 @@ It checks:
   withholding (`TEVKIFAT`, `IADE`, `SGK`, ...; see `WITHHOLDING_INVOICE_TYPE_CODES`). A
   `TEVKIFAT` invoice without withholding lines is accepted, as GİB's schematron accepts it.
 - Return types (`RETURN_INVOICE_TYPE_CODES`: `IADE`, `TEVKIFATIADE`, `YTBIADE`,
-  `YTBTEVKIFATIADE`): `billingReferenceInvoiceNo`, the returned invoice's 16-character number.
+  `YTBTEVKIFATIADE`): at least one returned invoice, each with its 16-character number
+  (`billingReferences`; the deprecated `billingReferenceInvoiceNo` is merged in).
   There is no tolerance: a net-priced line's VAT other than `round(net × rate)` is rejected, and
   a VAT-inclusive line's VAT is the one inside its amount. A fixed total net-priced lines miss is
   closed with `payableRoundingAmount`, never with a line's VAT.
@@ -506,6 +521,17 @@ try {
 }
 ```
 
+### `isValidVkn`, `isValidTckn`, `isValidTaxId`
+
+Check digits of a Turkish tax identifier. `isValidVkn` takes the 10-digit VKN of a legal entity,
+`isValidTckn` the 11-digit TCKN of a person, and `isValidTaxId` either one or one of GİB's
+placeholders (`FINAL_CONSUMER_TCKN`, `FOREIGN_BUYER_VKN`).
+
+```ts
+isValidTaxId('1234567890'); // true
+isValidTaxId('1111111111'); // false: a mistyped number
+```
+
 ### `UblValidationError`
 
 Error class thrown by `assertValidUblInvoiceInput`.
@@ -535,14 +561,24 @@ console.log(parsed.totals.payableAmount);
 It extracts:
 
 - Invoice id, UUID, issue date, profile, type, currency.
+- Document notes (`notes`: every `cbc:Note`, in order, empty ones left out).
+- Billing references (`billingReferences`: invoice number, date, document type of each), as a return
+  refers to the invoices it returns.
+- Payment means (`paymentMeans`: code, due date, IBAN without spaces, account currency, payment
+  note, bank and branch).
 - Supplier/customer name, VKN/TCKN, tax office, address.
 - Monetary totals (line extension, tax exclusive and inclusive, allowance total, payable), tax
   subtotals, and the document withholding total and subtotals.
-- Invoice lines, quantities, unit codes, prices, amounts, and taxes; each line's allowances and
+- Invoice lines, names, notes (`notes`), quantities, unit codes, prices, amounts, and taxes; each line's allowances and
   charges (`discount`, `surchargeAmount`, `allowanceCharges`) and its withholding
   (`withholdings`: code, percent, withheld amount, VAT it was taken from).
 
 The parser preserves VKN/TCKN leading zeroes.
+
+A document with a DOCTYPE or an ENTITY declaration is not parsed: `parse` throws `UblParseError`
+(`reason: 'doctype-not-allowed'`). UBL-TR invoices carry neither, and a declared entity can expand
+without bound (billion laughs) or point outside the document. The built-in escapes (`&amp;`, `&lt;`)
+are still read.
 
 Use it for:
 
@@ -954,13 +990,14 @@ The package validates structural consistency. It is not a full replacement for G
 
 Validation is intentionally conservative:
 
-- VKN must be 10 digits.
-- TCKN must be 11 digits.
+- VKN must be 10 digits and TCKN 11, each with matching check digits.
+- No text may hold a control character XML does not allow.
 - Supplier/customer title, tax office, city, and country are required.
 - Every supplied amount must equal `calculateInvoice` to the kuruş; `payableRoundingAmount` is at
   most one kuruş per line.
 - Withholding needs a known tevkifat code at GİB's rate for it, and an invoice type that allows it.
 - Return invoices need the returned invoice's 16-character number.
+- The profile and the invoice type must be a pair GİB's schematron allows.
 
 For production, validate generated XML against the current official GIB requirements and your private integrator's rules.
 
@@ -987,6 +1024,15 @@ npm run format:check
 npm run typecheck
 npm test
 npm run build
+```
+
+`test/xsd-validation.test.ts` checks the built XML of several invoice kinds (sale, withholding, a
+return of two invoices, exemption, IBAN payment, foreign currency, e-Arşiv) against GİB's UBL-TR
+1.2.1 schema with `xmllint`. The schema is not shipped; the test is skipped unless `UBL_TR_XSD`
+points at `xsdrt/maindoc/UBL-Invoice-2.1.xsd` of GİB's UBL-TR package:
+
+```bash
+UBL_TR_XSD=/path/to/UBL-TR-1.2.1-Paketi/xsdrt/maindoc/UBL-Invoice-2.1.xsd npm test
 ```
 
 ## Scope And Disclaimer

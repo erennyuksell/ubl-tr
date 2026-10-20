@@ -19,7 +19,7 @@ import type {
   UblCalcResult,
   UblInvoiceDocument,
 } from './types';
-import { assertValidUblInvoiceInput, calculateForBuild } from './validation';
+import { assertValidUblInvoiceInput, calculateForBuild, returnReferences } from './validation';
 import { UblValidationError } from './errors';
 import { toUblXml } from './xml';
 import { PRICE_DECIMALS, roundMoney, roundTo, toMinor } from './money';
@@ -244,14 +244,16 @@ function buildLine(line: UblInvoiceLine, calc: UblCalcLineResult, index: number,
   const taxTypeCode = calc.taxTypeCode;
   const taxName = TAX_CODE_NAMES[taxTypeCode] ?? DEFAULT_TAX_TYPE_NAME;
 
+  // TaxCategoryType order: TaxExemptionReasonCode, TaxExemptionReason, TaxScheme.
   const taxCategory: Record<string, unknown> = {
+    ...(line.taxExemptionReasonCode
+      ? {
+          TaxExemptionReasonCode: line.taxExemptionReasonCode,
+          TaxExemptionReason: line.taxExemptionReason ?? '',
+        }
+      : {}),
     TaxScheme: { Name: taxName, TaxTypeCode: taxTypeCode },
   };
-
-  if (line.taxExemptionReasonCode) {
-    taxCategory.TaxExemptionReasonCode = line.taxExemptionReasonCode;
-    taxCategory.TaxExemptionReason = line.taxExemptionReason ?? '';
-  }
 
   // ── Item element (GİB XSD order: Description → Name → BrandName → ModelName
   //    → BuyersItemIdentification → SellersItemIdentification → ManufacturersItemIdentification
@@ -396,17 +398,19 @@ function buildTaxTotal(calc: UblCalcResult, currency: string) {
   return {
     TaxAmount: amount(calc.taxTotalAmount, currency),
     TaxSubtotal: calc.taxSubtotals.map((group) => {
+      // TaxCategoryType order: TaxExemptionReasonCode, TaxExemptionReason, TaxScheme.
       const taxCategory: Record<string, unknown> = {
+        ...(group.taxExemptionReasonCode
+          ? { TaxExemptionReasonCode: group.taxExemptionReasonCode }
+          : {}),
+        ...(group.taxExemptionReasonCode && group.taxExemptionReason
+          ? { TaxExemptionReason: group.taxExemptionReason }
+          : {}),
         TaxScheme: {
           Name: TAX_CODE_NAMES[group.taxTypeCode] ?? DEFAULT_TAX_TYPE_NAME,
           TaxTypeCode: group.taxTypeCode,
         },
       };
-      // TaxExemptionReasonCode at header level (ISTISNA)
-      if (group.taxExemptionReasonCode) {
-        taxCategory.TaxExemptionReasonCode = group.taxExemptionReasonCode;
-        if (group.taxExemptionReason) taxCategory.TaxExemptionReason = group.taxExemptionReason;
-      }
       return {
         TaxableAmount: amount(group.taxableAmount, currency),
         TaxAmount: amount(group.taxAmount, currency),
@@ -700,19 +704,18 @@ export function buildUblInvoice(
       : {}),
 
     // ── Billing Reference (XSD #29 — IADE → orijinal fatura) ──
-    ...(RETURN_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode) && input.billingReferenceInvoiceNo
+    ...(RETURN_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode) && returnReferences(input).length
       ? {
-          BillingReference: [
-            {
-              InvoiceDocumentReference: {
-                ID: input.billingReferenceInvoiceNo,
-                DocumentTypeCode: 'IADE',
-                IssueDate: input.billingReferenceIssueDate
-                  ? formatDate(new Date(input.billingReferenceIssueDate))
-                  : formatDate(input.issueDate),
-              },
+          // DocumentReference order (XSD): ID, IssueDate, DocumentTypeCode.
+          BillingReference: returnReferences(input).map((reference) => ({
+            InvoiceDocumentReference: {
+              ID: reference.invoiceNo,
+              IssueDate: reference.issueDate
+                ? formatDate(new Date(reference.issueDate))
+                : formatDate(input.issueDate),
+              DocumentTypeCode: 'IADE',
             },
-          ],
+          })),
         }
       : {}),
 

@@ -252,7 +252,7 @@ describe('buildUblInvoice amounts', () => {
       ],
     });
     const xml = buildUblInvoiceXml(inputWith([line]));
-    expect(xml).toContain('<MultiplierFactorNumeric>0.05</MultiplierFactorNumeric>');
+    expect(xml).toContain('<cbc:MultiplierFactorNumeric>0.05</cbc:MultiplierFactorNumeric>');
   });
 
   it('writes a surcharge as ChargeIndicator=true and keeps it in the line amount', () => {

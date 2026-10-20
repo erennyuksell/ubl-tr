@@ -55,16 +55,16 @@ describe('XML serialization', () => {
     expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
     expect(xml).toContain('<Invoice ');
     expect(xml).toContain('xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"');
-    expect(xml).toContain('<UBLVersionID>2.1</UBLVersionID>');
-    expect(xml).toContain('<ID>ABC2026000000001</ID>');
-    expect(xml).toContain('<TaxAmount currencyID="TRY">200</TaxAmount>');
+    expect(xml).toContain('<cbc:UBLVersionID>2.1</cbc:UBLVersionID>');
+    expect(xml).toContain('<cbc:ID>ABC2026000000001</cbc:ID>');
+    expect(xml).toContain('<cbc:TaxAmount currencyID="TRY">200</cbc:TaxAmount>');
   });
 
   it('builds invoice XML directly from input', () => {
     const xml = buildUblInvoiceXml(input, { validate: true });
 
     expect(xml).toContain('<Invoice ');
-    expect(xml).toContain('<ProfileID>TEMELFATURA</ProfileID>');
-    expect(xml).toContain('<PayableAmount currencyID="TRY">1200</PayableAmount>');
+    expect(xml).toContain('<cbc:ProfileID>TEMELFATURA</cbc:ProfileID>');
+    expect(xml).toContain('<cbc:PayableAmount currencyID="TRY">1200</cbc:PayableAmount>');
   });
 });

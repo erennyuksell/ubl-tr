@@ -2,6 +2,54 @@
 
 All notable changes to this package will be documented in this file.
 
+## 0.4.0
+
+The XML now passes GİB's UBL-TR 1.2.1 schema, which 0.3.0's did not (its elements had no
+namespace prefixes), and validation follows GİB's current e-Fatura schematron (package of
+2026-08-21) on profile and invoice type pairs. Several checks reject input 0.3.0 accepted, hence
+the minor version.
+
+### Added
+
+- `InvoiceParser` returns the document notes as `notes` (every `cbc:Note`, in order, empty ones left
+  out). Sellers write references there, such as the order or project number an invoice belongs to.
+- `InvoiceParser` also returns `billingReferences` (number, date and type of each referred invoice),
+  `paymentMeans` (code, due date, IBAN, bank) and each line's `notes`.
+- `billingReferences` on `UblInvoiceInput`: a return can refer to several invoices. The single
+  `billingReferenceInvoiceNo` and `billingReferenceIssueDate` are deprecated and merged in.
+- `isValidVkn`, `isValidTckn`, `isValidTaxId`, `FINAL_CONSUMER_TCKN`, `FOREIGN_BUYER_VKN`.
+- A test that checks the XML of eight invoice kinds against GİB's UBL-TR 1.2.1 schema (run with
+  `UBL_TR_XSD`, see Development in the README).
+
+### Fixed
+
+- The XML had no namespace prefixes on its elements (`<ID>` instead of `<cbc:ID>`), so every element
+  sat in the Invoice namespace and GİB's schema refused the document. Elements are now written as
+  `cbc:`, `cac:` and `ext:`.
+- `TaxExemptionReasonCode` and `TaxExemptionReason` were written after `TaxScheme`; the schema wants
+  them before it, so exemption (`ISTISNA`) invoices were refused.
+- A `BillingReference` wrote `IssueDate` and `DocumentTypeCode` out of the schema's order.
+
+### Changed
+
+- Validation checks VKN and TCKN check digits. GİB's schematron checks only the length, so a
+  mistyped number that 0.3.0 accepted went out addressed to a wrong or unknown taxpayer; it is now
+  an issue on `supplier.vkn` or `customer.vkn`. GİB's placeholders `11111111111` and `2222222222`
+  pass. Every VKN and TCKN read from 82 real e-invoices passes the check.
+- Validation refuses a control character XML cannot carry in any text field.
+- Validation checks the profile against the invoice type as GİB's e-Fatura schematron of
+  2026-08-21 does (new `INVOICE_TYPE_PROFILE_IDS` and `PROFILE_INVOICE_TYPE_CODES`). An `IADE` under
+  `TICARIFATURA`, which 0.3.0 built and GİB refuses, is now an issue on `profileId`; GİB's older
+  UBL-TR 1.2.1 sample `IadeFaturasiOrnegi.xml` shows that pair, the current schematron does not
+  allow it.
+- The return reference issue is reported on `billingReferences` (none given) or
+  `billingReferences[i].invoiceNo` (wrong length), no longer on `billingReferenceInvoiceNo`.
+
+- `InvoiceParser.parse` refuses a document with a DOCTYPE or an ENTITY declaration and throws the new
+  `UblParseError` (`reason: 'doctype-not-allowed'`). UBL-TR invoices have neither; a declared entity
+  could expand without bound or reach outside the document. A caller that parsed such a document
+  before now gets an error.
+
 ## 0.3.0
 
 The package now calculates the invoice. `calculateInvoice` turns the business inputs (quantity,

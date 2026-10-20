@@ -157,7 +157,7 @@ export const WITHHOLDING_INVOICE_TYPE_CODES: readonly string[] = [
 /**
  * Return invoice types. GİB requires a BillingReference to the returned invoice on each
  * (DocumentTypeCode IADE and its 16-character ID), so validation requires
- * `billingReferenceInvoiceNo` on them.
+ * `billingReferences` on them.
  */
 export const RETURN_INVOICE_TYPE_CODES: readonly string[] = [
   'IADE',
@@ -165,6 +165,32 @@ export const RETURN_INVOICE_TYPE_CODES: readonly string[] = [
   'YTBIADE',
   'YTBTEVKIFATIADE',
 ];
+
+/**
+ * Which invoice types a profile allows, and which profile a type needs, as GİB's e-Fatura schematron
+ * (`UBL-TR_Common_Schematron.xml`, `InvoiceTypeCodeCheck` and the per-profile checks, package of
+ * 2026-08-21) writes them. Profiles and types not named here are not restricted by it.
+ */
+export const PROFILE_INVOICE_TYPE_CODES: Readonly<Record<string, readonly string[]>> = {
+  ENERJI: ['SARJ', 'SARJANLIK'],
+  ILAC_TIBBICIHAZ: ['SATIS', 'ISTISNA', 'TEVKIFAT', 'TEVKIFATIADE', 'IADE', 'IHRACKAYITLI'],
+  YATIRIMTESVIK: ['SATIS', 'ISTISNA', 'IADE', 'TEVKIFAT', 'TEVKIFATIADE'],
+  IDIS: ['SATIS', 'ISTISNA', 'IADE', 'TEVKIFAT', 'TEVKIFATIADE', 'IHRACKAYITLI'],
+};
+
+/**
+ * The profiles an invoice type may be issued under ("Fatura tipi IADE iken fatura profili sadece
+ * TEMELFATURA, EARSIVFATURA, ILAC_TIBBICIHAZ, YATIRIMTESVIK, IDIS veya KAMU olabilir"). A return
+ * of a TICARIFATURA invoice is therefore not an IADE under TICARIFATURA: the buyer refuses a
+ * commercial invoice with an application response instead. SARJ and SARJANLIK need ENERJI on an
+ * e-Fatura; the rule does not apply to e-Arşiv.
+ */
+export const INVOICE_TYPE_PROFILE_IDS: Readonly<Record<string, readonly string[]>> = {
+  IADE: ['TEMELFATURA', 'EARSIVFATURA', 'ILAC_TIBBICIHAZ', 'YATIRIMTESVIK', 'IDIS', 'KAMU'],
+  TEKNOLOJIDESTEK: ['EARSIVFATURA'],
+  SARJ: ['ENERJI', 'EARSIVFATURA'],
+  SARJANLIK: ['ENERJI', 'EARSIVFATURA'],
+};
 
 /** GİB Vergi Kodları → İsim eşleşmesi */
 export const TAX_CODE_NAMES: Record<string, string> = {

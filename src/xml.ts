@@ -12,6 +12,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** UBL extension elements: their own namespace (`ext`), whatever they contain. */
+const EXTENSION_ELEMENTS = new Set(['UBLExtensions', 'UBLExtension', 'ExtensionContent']);
+
+/**
+ * The element's qualified name. UBL puts every element in one of two namespaces by its kind: an aggregate
+ * (an element with child elements) is `cac`, a basic component (text, an amount, a code, with or without
+ * attributes) is `cbc`. The document object says which is which: a child object without `$value` holds
+ * elements, anything else holds text. A name that already has a prefix is kept.
+ */
+function qualifiedName(name: string, value: unknown): string {
+  if (name.includes(':')) return name;
+  if (EXTENSION_ELEMENTS.has(name)) return `ext:${name}`;
+  const sample = Array.isArray(value) ? value[0] : value;
+  const isAggregate = isRecord(sample) && !Object.prototype.hasOwnProperty.call(sample, '$value');
+  return `${isAggregate ? 'cac' : 'cbc'}:${name}`;
+}
+
 function normalizeForXml(value: UblValue | Record<string, string> | undefined): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeForXml(item));
@@ -35,7 +52,7 @@ function normalizeForXml(value: UblValue | Record<string, string> | undefined): 
 
   for (const [key, child] of Object.entries(value)) {
     if (key === '$value' || key === '$attributes') continue;
-    normalized[key] = normalizeForXml(child as UblValue);
+    normalized[qualifiedName(key, child)] = normalizeForXml(child as UblValue);
   }
 
   return normalized;

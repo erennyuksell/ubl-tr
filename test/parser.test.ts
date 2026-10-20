@@ -148,7 +148,7 @@ describe('InvoiceParser round trip', () => {
     currency: 'TRY',
     ...calculateInvoiceTotals(lines),
     supplier: party,
-    customer: { ...party, vkn: '1111111111', title: 'Customer Ltd.' },
+    customer: { ...party, vkn: '1111111114', title: 'Customer Ltd.' },
     lines,
   };
 

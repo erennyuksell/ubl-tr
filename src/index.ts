@@ -7,6 +7,14 @@ export { calculateInvoice } from './calc';
 export { allocateAmount, splitVatInclusive } from './allocate';
 export type { UblVatInclusiveSplit } from './allocate';
 export { InvoiceParser } from './parser';
+export { UblParseError } from './errors';
+export {
+  isValidVkn,
+  isValidTckn,
+  isValidTaxId,
+  FINAL_CONSUMER_TCKN,
+  FOREIGN_BUYER_VKN,
+} from './identity';
 export { toUblXml } from './xml';
 export {
   calculateInvoiceTotals,
@@ -27,6 +35,7 @@ export type {
   UblLegalEntity,
   UblPartyIdentification,
   // Payment
+  UblBillingReference,
   UblFinancialAccount,
   UblPaymentMeans,
   // Delivery & Shipment (İhracat)
@@ -71,6 +80,8 @@ export {
   WITHHOLDING_TAX_CODES,
   WITHHOLDING_INVOICE_TYPE_CODES,
   RETURN_INVOICE_TYPE_CODES,
+  PROFILE_INVOICE_TYPE_CODES,
+  INVOICE_TYPE_PROFILE_IDS,
 } from './constants';
 export type { UblWithholdingTaxCode } from './constants';
 export { roundMoney, roundTo, toMinor, fromMinor, sumInMinor } from './money';

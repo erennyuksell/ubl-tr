@@ -7,6 +7,7 @@ import {
   validateUblInvoiceInput,
 } from '../src';
 import type { UblInvoiceInput, UblInvoiceLine } from '../src';
+import { returnReferences } from '../src/validation';
 
 const lines: UblInvoiceLine[] = [
   {
@@ -334,12 +335,10 @@ describe('validation of return invoices', () => {
 
   it("requires the returned invoice's 16-character number on every return type", () => {
     for (const invoiceTypeCode of ['IADE', 'TEVKIFATIADE', 'YTBIADE', 'YTBTEVKIFATIADE']) {
-      expect(paths(withLines(returnLines, { invoiceTypeCode }))).toEqual([
-        'billingReferenceInvoiceNo',
-      ]);
+      expect(paths(withLines(returnLines, { invoiceTypeCode }))).toEqual(['billingReferences']);
       expect(
         paths(withLines(returnLines, { invoiceTypeCode, billingReferenceInvoiceNo: 'IADE-ABC-1' })),
-      ).toEqual(['billingReferenceInvoiceNo']);
+      ).toEqual(['billingReferences[0].invoiceNo']);
       expect(
         paths(
           withLines(returnLines, {
@@ -349,5 +348,121 @@ describe('validation of return invoices', () => {
         ),
       ).toEqual([]);
     }
+  });
+
+  it('takes several returned invoices and checks each one', () => {
+    const invoiceTypeCode = 'IADE';
+    const billingReferences = [
+      { invoiceNo: 'ABC2026000000009', issueDate: '2026-05-01' },
+      { invoiceNo: 'ABC2026000000010' },
+    ];
+    expect(paths(withLines(returnLines, { invoiceTypeCode, billingReferences }))).toEqual([]);
+    expect(
+      paths(
+        withLines(returnLines, {
+          invoiceTypeCode,
+          billingReferences: [...billingReferences, { invoiceNo: 'X' }],
+        }),
+      ),
+    ).toEqual(['billingReferences[2].invoiceNo']);
+  });
+});
+
+describe('validation of identifiers and text', () => {
+  const lines = [vatLine(1000, 20, 200)];
+
+  it('refuses a VKN or TCKN whose check digits do not match', () => {
+    const input = withLines(lines);
+    expect(paths({ ...input, customer: { ...input.customer, vkn: '1111111111' } })).toEqual([
+      'customer.vkn',
+    ]);
+    expect(paths({ ...input, customer: { ...input.customer, vkn: '12345678901' } })).toEqual([
+      'customer.vkn',
+    ]);
+  });
+
+  it("accepts GİB's placeholder numbers for a final consumer and a foreign buyer", () => {
+    const input = withLines(lines);
+    expect(paths({ ...input, customer: { ...input.customer, vkn: '11111111111' } })).toEqual([]);
+    expect(paths({ ...input, customer: { ...input.customer, vkn: '2222222222' } })).toEqual([]);
+  });
+
+  it('does not hold a foreign buyer (export, tax free) to the Turkish party rules', () => {
+    const input = withLines(lines);
+    const buyerCustomer = {
+      vkn: '',
+      title: 'Foreign Buyer Ltd.',
+      address: { city: 'Berlin', country: 'Almanya' },
+    };
+    expect(paths({ ...input, buyerCustomer })).toEqual([]);
+  });
+
+  it('writes each returned invoice once', () => {
+    const input = withLines(lines, {
+      invoiceTypeCode: 'IADE',
+      billingReferenceInvoiceNo: 'ABC2026000000009',
+      billingReferences: [
+        { invoiceNo: 'ABC2026000000009' },
+        { invoiceNo: ' ABC2026000000010 ' },
+        { invoiceNo: 'ABC2026000000010' },
+      ],
+    });
+    expect(returnReferences(input).map((reference) => reference.invoiceNo)).toEqual([
+      'ABC2026000000009',
+      'ABC2026000000010',
+    ]);
+  });
+
+  it('refuses a control character XML cannot carry, with its path', () => {
+    const input = withLines(lines);
+    expect(paths({ ...input, notes: ['Ödeme\u0007 notu'] })).toEqual(['notes[0]']);
+    expect(paths({ ...input, notes: ['Satır\nsonu\tsekme'] })).toEqual([]);
+  });
+});
+
+describe('validation of the profile and the invoice type', () => {
+  const lines = [vatLine(1000, 20, 200)];
+  const reference = { billingReferences: [{ invoiceNo: 'ABC2026000000009' }] };
+
+  it('refuses a return under TICARIFATURA and accepts it under TEMELFATURA and EARSIVFATURA', () => {
+    const input = (profileId: string) =>
+      withLines(lines, { profileId, invoiceTypeCode: 'IADE', ...reference });
+    expect(paths(input('TICARIFATURA'))).toEqual(['profileId']);
+    expect(paths(input('TEMELFATURA'))).toEqual([]);
+    expect(paths(input('EARSIVFATURA'))).toEqual([]);
+  });
+
+  it('keeps the restricted profiles to their own types', () => {
+    expect(paths(withLines(lines, { profileId: 'IDIS', invoiceTypeCode: 'OZELMATRAH' }))).toEqual([
+      'invoiceTypeCode',
+    ]);
+    expect(paths(withLines(lines, { profileId: 'ENERJI', invoiceTypeCode: 'SATIS' }))).toEqual([
+      'invoiceTypeCode',
+    ]);
+    expect(
+      paths(withLines(lines, { profileId: 'YATIRIMTESVIK', invoiceTypeCode: 'SATIS' })),
+    ).toEqual([]);
+  });
+
+  it('needs ENERJI or e-Arşiv for a charging invoice, e-Arşiv for TEKNOLOJIDESTEK', () => {
+    expect(paths(withLines(lines, { profileId: 'TEMELFATURA', invoiceTypeCode: 'SARJ' }))).toEqual([
+      'profileId',
+    ]);
+    expect(paths(withLines(lines, { profileId: 'ENERJI', invoiceTypeCode: 'SARJ' }))).toEqual([]);
+    expect(
+      paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'SARJANLIK' })),
+    ).toEqual([]);
+    expect(
+      paths(withLines(lines, { profileId: 'TICARIFATURA', invoiceTypeCode: 'TEKNOLOJIDESTEK' })),
+    ).toEqual(['profileId']);
+  });
+
+  it('leaves profiles and types the schematron does not pair alone', () => {
+    expect(
+      paths(withLines(lines, { profileId: 'TICARIFATURA', invoiceTypeCode: 'ISTISNA' })),
+    ).toEqual([]);
+    expect(
+      paths(withLines(lines, { profileId: 'YENIPROFIL', invoiceTypeCode: 'YENITIP' })),
+    ).toEqual([]);
   });
 });

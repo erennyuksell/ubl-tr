@@ -377,6 +377,14 @@ export interface UblDelivery {
 
 // ─── Main Invoice Input ──────────────────────────────────
 
+/** A returned invoice a return (IADE) refers to. */
+export interface UblBillingReference {
+  /** The returned invoice's 16-character GİB number. */
+  invoiceNo: string;
+  /** Its issue date (YYYY-MM-DD); the return's own date when left out. */
+  issueDate?: string;
+}
+
 /**
  * Input for building a UBL-TR Invoice JS object.
  * Provider-agnostic — works with any e-fatura provider (Uyumsoft, Foriba, Logo, etc.)
@@ -438,8 +446,15 @@ export interface UblInvoiceInput {
   receiptDocumentDate?: string;
   contractDocumentNo?: string; // Sözleşme referansı
   contractDocumentDate?: string;
-  billingReferenceInvoiceNo?: string; // Returned invoice's 16-character GİB number; required on returns
+  /** @deprecated Use `billingReferences`; kept and merged with it. */
+  billingReferenceInvoiceNo?: string;
+  /** @deprecated Use `billingReferences`. */
   billingReferenceIssueDate?: string;
+  /**
+   * The invoices a return (IADE) refers to: each the returned invoice's 16-character GİB number and its date.
+   * Required on returns; GİB allows several (`cac:BillingReference` is unbounded).
+   */
+  billingReferences?: UblBillingReference[];
   additionalDocumentReferences?: Array<{
     id: string;
     issueDate?: string;

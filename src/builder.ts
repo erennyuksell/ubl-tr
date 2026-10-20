@@ -403,12 +403,14 @@ function buildLine(line: UblInvoiceLine, calc: UblCalcLineResult, index: number,
     // ── Delivery precedes AllowanceCharge in InvoiceLineType ──
     ...(line.delivery ? { Delivery: buildDelivery(line.delivery) } : {}),
     ...(allowanceCharges.length > 0 ? { AllowanceCharge: allowanceCharges } : {}),
+    // A waived VAT is shown in the subtotal with CalculationSequenceNumeric -1 and not charged.
     TaxTotal: {
       TaxAmount: amount(calc.taxAmount, currency),
       TaxSubtotal: [
         {
           TaxableAmount: amount(calc.lineAmount, currency),
-          TaxAmount: amount(calc.taxAmount, currency),
+          TaxAmount: amount(calc.waivedTaxAmount ?? calc.taxAmount, currency),
+          ...(calc.waivedTaxAmount != null ? { CalculationSequenceNumeric: -1 } : {}),
           Percent: calc.vatRate,
           TaxCategory: taxCategory,
         },
@@ -443,6 +445,7 @@ function buildTaxTotal(calc: UblCalcResult, currency: string) {
       return {
         TaxableAmount: amount(group.taxableAmount, currency),
         TaxAmount: amount(group.taxAmount, currency),
+        ...(group.waived ? { CalculationSequenceNumeric: -1 } : {}),
         Percent: group.vatRate,
         TaxCategory: taxCategory,
       };
@@ -636,6 +639,41 @@ function buildPaymentMeans(pm: UblPaymentMeans) {
   return result;
 }
 
+// ─── SGK references ──────────────────────────────────────
+
+/** What SGK calls the provider code, name and file number of each invoice group (its technical document). */
+const SGK_LABELS: Readonly<Record<string, readonly [string, string, string]>> = {
+  SAGLIK_ECZ: ['Eczane Sicil Numarası', 'Eczane Adı', 'Evrak No'],
+  SAGLIK_HAS: ['Sağlık Tesisi Kodu', 'Sağlık Tesisi Adı', 'Evrak Referans No'],
+  SAGLIK_OPT: ['Optisyenlik Müessesesi Tesis Kodu', 'Optisyenlik Müessesesi Adı', 'Evrak No'],
+  SAGLIK_MED: ['Satış Merkezi Kodu', 'Satış Merkezi Adı', 'Evrak No'],
+  ABONELIK: ['', '', 'Abone No'],
+  MAL_HIZMET: ['', '', 'Harcama Referans No'],
+};
+
+/** SGK's MUKELLEF_KODU, MUKELLEF_ADI and DOSYA_NO as additional document references (value in DocumentType). */
+function sgkReferences(input: UblInvoiceInput) {
+  const sgk = input.sgk;
+  if (!sgk) return [];
+  const labels = SGK_LABELS[sgk.group] ?? ['', '', ''];
+  const issueDate = formatDate(input.issueDate);
+  return (
+    [
+      ['MUKELLEF_KODU', sgk.providerCode, labels[0]],
+      ['MUKELLEF_ADI', sgk.providerName, labels[1]],
+      ['DOSYA_NO', sgk.fileNo, labels[2]],
+    ] as const
+  )
+    .filter(([, value]) => value?.trim())
+    .map(([code, value, label]) => ({
+      ID: value!.trim(),
+      IssueDate: issueDate,
+      DocumentTypeCode: code,
+      DocumentType: value!.trim(),
+      ...(label ? { DocumentDescription: label } : {}),
+    }));
+}
+
 // ─── Main Builder ────────────────────────────────────────
 
 /**
@@ -705,6 +743,18 @@ export function buildUblInvoice(
     })),
   ];
 
+  // DocumentReferenceType order: ID, IssueDate, DocumentTypeCode, DocumentType, DocumentDescription.
+  const additionalReferences = [
+    ...(input.additionalDocumentReferences ?? []).map((ref) => ({
+      ID: ref.schemeId ? { $value: ref.id, $attributes: { schemeID: ref.schemeId } } : ref.id,
+      ...(ref.issueDate ? { IssueDate: ref.issueDate } : {}),
+      ...(ref.documentTypeCode ? { DocumentTypeCode: ref.documentTypeCode } : {}),
+      ...(ref.documentType ? { DocumentType: ref.documentType } : {}),
+      ...(ref.documentDescription ? { DocumentDescription: ref.documentDescription } : {}),
+    })),
+    ...sgkReferences(input),
+  ];
+
   const allNotes: string[] = [];
   if (input.notes?.length) allNotes.push(...input.notes);
   if (input.description && !allNotes.includes(input.description)) allNotes.push(input.description);
@@ -741,6 +791,8 @@ export function buildUblInvoice(
     ...(input.taxCurrencyCode ? { TaxCurrencyCode: input.taxCurrencyCode } : {}),
     ...(input.pricingCurrencyCode ? { PricingCurrencyCode: input.pricingCurrencyCode } : {}),
     ...(input.paymentCurrencyCode ? { PaymentCurrencyCode: input.paymentCurrencyCode } : {}),
+    // ── AccountingCost: the SGK invoice group ──
+    ...(input.sgk ? { AccountingCost: input.sgk.group } : {}),
 
     LineCountNumeric: input.lines.length,
 
@@ -813,17 +865,8 @@ export function buildUblInvoice(
           }
         : {}),
 
-    // ── Additional Document Reference (XSD #34) ──────────
-    ...(input.additionalDocumentReferences?.length
-      ? {
-          AdditionalDocumentReference: input.additionalDocumentReferences.map((ref) => ({
-            ID: ref.schemeId ? { $value: ref.id, $attributes: { schemeID: ref.schemeId } } : ref.id,
-            ...(ref.issueDate ? { IssueDate: ref.issueDate } : {}),
-            ...(ref.documentType ? { DocumentType: ref.documentType } : {}),
-            ...(ref.documentDescription ? { DocumentDescription: ref.documentDescription } : {}),
-          })),
-        }
-      : {}),
+    // ── Additional Document Reference (XSD #34): the caller's, then SGK's ──────────
+    ...(additionalReferences.length ? { AdditionalDocumentReference: additionalReferences } : {}),
 
     // ── Signature (with GİB-compliant schemeID) ──────
     Signature: [

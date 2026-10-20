@@ -346,3 +346,34 @@ describe('@erennyuksell/ubl-tr/calc entry', () => {
     expect('InvoiceParser' in calcEntry).toBe(false);
   });
 });
+
+describe('calculateInvoice waived VAT (investment incentive exemption)', () => {
+  it("shows the VAT and charges none, as GİB's YTB_Istisna_Efatura.xml", () => {
+    const result = calculateInvoice({
+      lines: [
+        { quantity: 15, price: 100, vatRate: 20, taxExemptionReasonCode: '308', vatWaived: true },
+      ],
+    });
+    expect(result.lines[0]).toMatchObject({ lineAmount: 1500, taxAmount: 0, waivedTaxAmount: 300 });
+    expect(result.taxSubtotals).toEqual([
+      expect.objectContaining({ taxableAmount: 1500, taxAmount: 300, vatRate: 20, waived: true }),
+    ]);
+    expect(result).toMatchObject({
+      vatAmount: 0,
+      taxTotalAmount: 0,
+      taxExclusiveAmount: 1500,
+      taxInclusiveAmount: 1500,
+      payableAmount: 1500,
+    });
+  });
+});
+
+describe('calculateInvoice waived VAT input', () => {
+  it('refuses a VAT-inclusive price on a waived line', () => {
+    expect(() =>
+      calculateInvoice({
+        lines: [{ quantity: 1, price: 0, vatInclusiveAmount: 1200, vatRate: 20, vatWaived: true }],
+      }),
+    ).toThrow(UblValidationError);
+  });
+});

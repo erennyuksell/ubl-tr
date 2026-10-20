@@ -142,6 +142,14 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
     'tax-free sale to a tourist',
     base({
       profileId: 'YOLCUBERABERFATURA',
+      invoiceTypeCode: 'ISTISNA',
+      lines: [
+        line({
+          taxExemptionReasonCode: '501',
+          taxExemptionReason:
+            "Türkiye'de İkamet Etmeyenlere KDV Hesaplanarak Yapılan Satışlar (Yolcu Beraberi Eşya)",
+        }),
+      ],
       customer: customsAuthority,
       buyerCustomer: {
         vkn: '',
@@ -190,6 +198,11 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
         code: '42',
         financialAccount: { iban: 'TR330006100519786457841326', currencyCode: 'TRY' },
       },
+      buyerCustomer: {
+        vkn: '1234567890',
+        title: 'Harcama Birimi',
+        address: { city: 'Ankara', country: 'Türkiye' },
+      },
     }),
   ],
   [
@@ -224,7 +237,7 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
           issueDate: '2026-05-21',
         },
       ],
-      lines: [line({ name: 'AC' })],
+      lines: [line({ name: 'AC', unitCode: 'KWH' })],
     }),
   ],
   [
@@ -237,7 +250,7 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
       invoicePeriodStartTime: '06:00:00',
       invoicePeriodEnd: new Date('2026-05-28T00:00:00Z'),
       invoicePeriodEndTime: '07:30:00',
-      lines: [line({ name: 'DC', itemInstance: { serialId: '45225' } })],
+      lines: [line({ name: 'DC', unitCode: 'KWH', itemInstance: { serialId: '45225' } })],
     }),
   ],
   [
@@ -273,7 +286,12 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
     base({
       profileId: 'ILAC_TIBBICIHAZ',
       lines: [
-        line({ name: 'İlaç', additionalItemIds: [{ schemeID: 'ILAC', value: '8699999999999' }] }),
+        line({
+          name: 'İlaç',
+          additionalItemIds: [
+            { schemeID: 'ILAC', value: '(GTIN)8680222690047(BN)0714450(SN)9546433(XD)210909' },
+          ],
+        }),
       ],
     }),
   ],
@@ -350,6 +368,66 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
           },
         }),
       ],
+    }),
+  ],
+  [
+    'investment incentive exemption (YATIRIMTESVIK ISTISNA, waived VAT)',
+    base({
+      profileId: 'YATIRIMTESVIK',
+      invoiceTypeCode: 'ISTISNA',
+      investmentIncentive: { no: '123456', issueDate: '2026-01-01' },
+      lines: [
+        line({
+          name: 'Ürün adı',
+          quantity: 15,
+          price: 100,
+          lineAmount: 1500,
+          taxAmount: 0,
+          classificationCode: '01',
+          modelName: 'Makine Adı',
+          itemInstance: { productTraceId: '74563', serialId: '412578' },
+          taxExemptionReasonCode: '308',
+          taxExemptionReason: '13/d Teşvikli Yatırım Mallarının Teslimi',
+        }),
+      ],
+    }),
+  ],
+  [
+    'e-Arşiv investment incentive exemption (YTBISTISNA, construction)',
+    base({
+      profileId: 'EARSIVFATURA',
+      invoiceTypeCode: 'YTBISTISNA',
+      eArchiveInfo: { deliveryType: 'Electronic' },
+      investmentIncentive: { no: '654321', issueDate: '2026-02-01' },
+      lines: [
+        line({
+          taxAmount: 0,
+          classificationCode: '02',
+          taxExemptionReasonCode: '339',
+          taxExemptionReason:
+            'İmalat Sanayi ile Turizme Yönelik Yatırım Teşvik Belgesi Kapsamındaki İnşaat İşlerine İlişkin Teslim ve Hizmetler',
+        }),
+      ],
+    }),
+  ],
+  [
+    'SGK pharmacy invoice with group, provider, file number and period',
+    base({
+      invoiceTypeCode: 'SGK',
+      customer: {
+        vkn: '7750409379',
+        title: 'Sosyal Güvenlik Kurumu Başkanlığı',
+        taxOffice: 'Çankaya',
+        address: { city: 'Ankara', country: 'Türkiye' },
+      },
+      sgk: {
+        group: 'SAGLIK_ECZ',
+        providerCode: '15425689',
+        providerName: 'Deneme Eczanesi',
+        fileNo: '798564',
+      },
+      invoicePeriodStart: new Date('2026-05-01T00:00:00Z'),
+      invoicePeriodEnd: new Date('2026-05-31T00:00:00Z'),
     }),
   ],
 ];

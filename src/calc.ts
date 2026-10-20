@@ -60,6 +60,8 @@ interface WorkingLine {
   charges: Array<UblCalcAllowanceCharge & { amountMinor: number; baseMinor: number }>;
   netMinor: number;
   vatMinor: number;
+  /** Waived VAT (vazgeçilen KDV): computed, shown, not charged; `vatMinor` is then 0. */
+  waivedMinor: number;
   /** VAT taken out of `vatInclusiveAmount`; the line's total is fixed. */
   inclusiveVatMinor?: number;
   withholdingCode?: string;
@@ -94,6 +96,12 @@ function checkLineInputs(line: UblCalcLine, path: string, issues: UblValidationI
   if (line.quantity <= 0) add('quantity', 'Quantity must be greater than zero.');
   if (!inclusive && line.price < 0) add('price', 'Price cannot be negative.');
   if (inclusive && line.vatInclusiveAmount! < 0) add('vatInclusiveAmount', 'Cannot be negative.');
+  if (inclusive && line.vatWaived) {
+    add(
+      'vatInclusiveAmount',
+      'A line whose VAT is waived is priced net: no VAT is in what is charged.',
+    );
+  }
   if (inclusive) {
     for (const field of ['discountRate', 'surchargeRate'] as const) {
       if (line[field] !== undefined && line[field] !== 0) {
@@ -204,6 +212,7 @@ export function computeInvoice(
       charges,
       netMinor: Math.max(0, netMinor),
       vatMinor: 0,
+      waivedMinor: 0,
       ...(inclusiveVatMinor !== undefined ? { inclusiveVatMinor } : {}),
       withholdingRate: 0,
       withholdingMinor: 0,
@@ -304,6 +313,13 @@ export function computeInvoice(
     }
   }
 
+  // ── Waived VAT: computed as above, moved out of what is charged ──
+  lines.forEach((line) => {
+    if (!line.source.vatWaived) return;
+    line.waivedMinor = line.vatMinor;
+    line.vatMinor = 0;
+  });
+
   // ── Withholding (tevkifat): rate from the code, one rounding of VAT × rate ──
   lines.forEach((line, index) => {
     const source = line.source;
@@ -354,13 +370,14 @@ export function computeInvoice(
       ...(line.source.taxExemptionReason
         ? { taxExemptionReason: line.source.taxExemptionReason }
         : {}),
+      ...(line.source.vatWaived ? { waived: true } : {}),
       taxableAmount: 0,
       taxAmount: 0,
       taxableMinor: 0,
       taxMinor: 0,
     };
     group.taxableMinor += line.netMinor;
-    group.taxMinor += line.vatMinor;
+    group.taxMinor += line.vatMinor + line.waivedMinor;
     taxGroups.set(key, group);
   }
 
@@ -401,6 +418,7 @@ export function computeInvoice(
         vatRate: line.source.vatRate,
         taxTypeCode: line.source.taxTypeCode ?? DEFAULT_TAX_TYPE_CODE,
         taxAmount: fromMinor(line.vatMinor),
+        ...(line.source.vatWaived ? { waivedTaxAmount: fromMinor(line.waivedMinor) } : {}),
         ...(line.withholdingCode ? { withholdingTaxCode: line.withholdingCode } : {}),
         withholdingTaxRate: line.withholdingRate,
         withholdingTaxAmount: fromMinor(line.withholdingMinor),
@@ -477,9 +495,9 @@ function withFactor(factor: number | undefined): { multiplierFactor?: number } {
   return factor == null ? {} : { multiplierFactor: factor };
 }
 
-/** Rate group: VAT rate, tax type code and exemption code. */
+/** Rate group: VAT rate, tax type code, exemption code, and whether the VAT is waived. */
 function groupKey(line: UblCalcLine): string {
-  return `${line.vatRate}_${line.taxTypeCode ?? DEFAULT_TAX_TYPE_CODE}_${line.taxExemptionReasonCode ?? ''}`;
+  return `${line.vatRate}_${line.taxTypeCode ?? DEFAULT_TAX_TYPE_CODE}_${line.taxExemptionReasonCode ?? ''}_${line.vatWaived ? 'waived' : ''}`;
 }
 
 /**
@@ -495,6 +513,8 @@ function groupKey(line: UblCalcLine): string {
  *   amount, `round(amount × rate / (100 + rate))`, and the line comes to it exactly.
  * - A document discount or charge (`headerAllowanceCharges`) is spread over the lines by net
  *   amount, so VAT is computed on what each line really costs.
+ * - A `vatWaived` line (investment incentive exemption) has its VAT computed and reported as
+ *   `waivedTaxAmount`, but charged as 0: it is in no total and not in the payable amount.
  * - No VAT amount is passed in. A fixed total that net-priced lines cannot reach (the exact
  *   reversal of an invoice issued with another rounding) is closed with `payableRoundingAmount`,
  *   one kuruş per line at most.

@@ -6,9 +6,8 @@ whole schematron on one invoice of each kind ubl-tr builds.
 
 | Where | Rules |
 | --- | --- |
-| ubl-tr validation, before building | 87 |
+| ubl-tr validation, before building | 91 |
 | Builder always writes it right; the schematron test proves it | 14 |
-| Refused by validation: investment incentive exemption, waiting for GİB's guide | 4 |
 | Not ubl-tr (signature, envelope, other documents, display, unused) | 194 |
 | Total | 299 |
 
@@ -172,10 +171,10 @@ whole schematron on one invoice of each kind ubl-tr builds.
 | 156 | IhracKayitliPartyIdentificationIDTypeCheck | ubl-tr validation | Geçersiz Ihraç Kayıtlı schemeID niteliği. Geçerli değerler için kod listesine bakınız." |
 | 157 | YatirimTesvikCommodityClassificationCheck | ubl-tr validation | Yatırım Teşvik Faturasında Harcama Tipi belirtilmelidir. |
 | 158 | YatirimTesvikItemClassificationCodeCheck | ubl-tr validation | Geçersiz cbc:ItemClassificationCode elemanı değeri. Geçerki değer için YatirimTesvikItemClassificationCodeList listesine bakınız. |
-| 159 | YatirimTesvikItemClassificationCodeIstisnaCheck | refused: investment incentive exemption, pending GİB guide | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde Harcama Tipi 01 veya 02 kodunu alabilir. |
-| 160 | YatirimTesvikItemClassificationCodeIstisnaCalculationSequenceNumericCheck | refused: investment incentive exemption, pending GİB guide | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde cbc:CalculationSequenceNumeric alanı -1 seçilmelidir. |
-| 161 | YatirimTesvikTaxExemptionReasonCode308Check | refused: investment incentive exemption, pending GİB guide | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde Harcama Tipi 01 ise 308 istisna kodu seçilebilir. |
-| 162 | YatirimTesvikTaxExemptionReasonCode339Check | refused: investment incentive exemption, pending GİB guide | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde Harcama Tipi 02 ise 339 istisna kodu seçilebilir. |
+| 159 | YatirimTesvikItemClassificationCodeIstisnaCheck | ubl-tr validation | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde Harcama Tipi 01 veya 02 kodunu alabilir. |
+| 160 | YatirimTesvikItemClassificationCodeIstisnaCalculationSequenceNumericCheck | ubl-tr validation | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde cbc:CalculationSequenceNumeric alanı -1 seçilmelidir. |
+| 161 | YatirimTesvikTaxExemptionReasonCode308Check | ubl-tr validation | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde Harcama Tipi 01 ise 308 istisna kodu seçilebilir. |
+| 162 | YatirimTesvikTaxExemptionReasonCode339Check | ubl-tr validation | Yatırım Teşvik Faturasında ISTISNA Fatura Tipinde Harcama Tipi 02 ise 339 istisna kodu seçilebilir. |
 | 163 | YatirimTesvikItemInstanceCheck | ubl-tr validation | Yatırım Teşvik Faturasında Harcama Tipi 01 için Makine Adı, Makine Teçhizat Sıra No ve Makine ID alanları belirtilmelidir. |
 | 164 | YatirimTesvikKDVCheck | ubl-tr validation | Yatırım Teşvik Faturasında KDV Oranı ve Değeri girilmelidir. |
 | 165 | YatirimTesvikLineKDVCheck #1 | ubl-tr validation | Yatırım Teşvik Faturasında Kalem Bazında KDV Oranı ve Değeri girilmelidir. |

@@ -142,10 +142,31 @@ function paths(input: UblInvoiceInput, options?: Parameters<typeof validateUblIn
 }
 
 /** What an export line carries: delivery terms, address, transport mode and GTİP. */
-const exportDelivery = {
+const exportDelivery: UblInvoiceLine['delivery'] = {
   deliveryTerms: 'FOB',
   address: { city: 'Bridgtow', country: 'Great Britain' },
   shipment: { transportModeCode: '1', goodsItems: [{ requiredCustomsId: '847130000000' }] },
+};
+
+/** The customs authority, the customer of an export and a tax-free sale (customs guide). */
+const customsAuthority = {
+  vkn: '1460415308',
+  title: 'Gümrük ve Ticaret Bakanlığı',
+  taxOffice: 'Ulus',
+  address: { city: 'Ankara', country: 'Türkiye' },
+};
+/** A public invoice's spending unit and account (public invoice guide). */
+const kamu = {
+  profileId: 'KAMU',
+  paymentMeans: {
+    code: '42',
+    financialAccount: { iban: 'TR330006100519786457841326', currencyCode: 'TRY' },
+  },
+  buyerCustomer: {
+    vkn: '1234567890',
+    title: 'Harcama Birimi',
+    address: { city: 'Ankara', country: 'Türkiye' },
+  },
 };
 
 const vatLine = (lineAmount: number, vatRate: number, taxAmount: number): UblInvoiceLine => ({
@@ -155,6 +176,20 @@ const vatLine = (lineAmount: number, vatRate: number, taxAmount: number): UblInv
   lineAmount,
   vatRate,
   taxAmount,
+});
+
+/** An export line: no VAT, exemption 301, its delivery (customs guide). */
+const exportLine = (withDelivery = true): UblInvoiceLine => ({
+  ...vatLine(1000, 0, 0),
+  taxExemptionReasonCode: '301',
+  taxExemptionReason: '11/1-a Mal ihracatı',
+  ...(withDelivery ? { delivery: exportDelivery } : {}),
+});
+/** A tax-free sale line: VAT kept, exemption 501 (customs guide). */
+const taxFreeLine = (): UblInvoiceLine => ({
+  ...vatLine(1000, 20, 200),
+  taxExemptionReasonCode: '501',
+  taxExemptionReason: 'Yolcu Beraberi Eşya',
 });
 
 describe('validation of supplied amounts (exact, no tolerance)', () => {
@@ -400,10 +435,11 @@ describe('validation of identifiers and text', () => {
   });
 
   it('does not hold a foreign buyer to the Turkish party rules', () => {
-    const input = withLines(
-      lines.map((line) => ({ ...line, delivery: exportDelivery })),
-      { profileId: 'IHRACAT', invoiceTypeCode: 'ISTISNA' },
-    );
+    const input = withLines([exportLine()], {
+      profileId: 'IHRACAT',
+      invoiceTypeCode: 'ISTISNA',
+      customer: customsAuthority,
+    });
     const buyerCustomer = {
       vkn: '',
       title: 'Foreign Buyer Ltd.',
@@ -459,6 +495,7 @@ describe('validation of the profile and the invoice type', () => {
     ]);
     expect(paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'SARJ' }))).toEqual(
       [
+        'lines[0].unitCode',
         'customer.additionalIds',
         'invoicePeriodStart',
         'invoicePeriodStartTime',
@@ -474,13 +511,31 @@ describe('validation of the profile and the invoice type', () => {
     ]);
   });
 
-  it("refuses an investment incentive exemption until GİB's guide is checked", () => {
-    expect(
-      paths(withLines(lines, { profileId: 'YATIRIMTESVIK', invoiceTypeCode: 'ISTISNA' })),
-    ).toContain('invoiceTypeCode');
-    expect(
-      paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'YTBISTISNA' })),
-    ).toContain('invoiceTypeCode');
+  it('takes an investment incentive exemption with expense type 01 or 02 and its own exemption', () => {
+    const exemption = (expense: string, code: string) =>
+      paths(
+        withLines(
+          [
+            {
+              ...vatLine(1500, 20, 0),
+              classificationCode: expense,
+              modelName: 'Makine',
+              itemInstance: { productTraceId: '1', serialId: 'M1' },
+              taxExemptionReasonCode: code,
+              taxExemptionReason: 'Gerekçe',
+            },
+          ],
+          {
+            profileId: 'YATIRIMTESVIK',
+            invoiceTypeCode: 'ISTISNA',
+            investmentIncentive: { no: '123456', issueDate: '2026-01-01' },
+          },
+        ),
+      );
+    expect(exemption('01', '308')).toEqual([]);
+    expect(exemption('02', '339')).toEqual([]);
+    expect(exemption('01', '339')).toEqual(['lines[0].taxExemptionReasonCode']);
+    expect(exemption('03', '308')).toEqual(['lines[0].classificationCode']);
   });
 
   it("refuses a profile or a type that is not in GİB's lists", () => {
@@ -496,14 +551,12 @@ describe('validation of the buyer of an export or a tax-free sale', () => {
   const lines = [vatLine(1000, 20, 200)];
   const address = { city: 'London', country: 'Great Britain' };
   const exportInput = (buyerCustomer?: UblInvoiceInput['buyerCustomer']) =>
-    withLines(
-      lines.map((line) => ({ ...line, delivery: exportDelivery })),
-      {
-        profileId: 'IHRACAT',
-        invoiceTypeCode: 'ISTISNA',
-        ...(buyerCustomer ? { buyerCustomer } : {}),
-      },
-    );
+    withLines([exportLine()], {
+      profileId: 'IHRACAT',
+      invoiceTypeCode: 'ISTISNA',
+      customer: customsAuthority,
+      ...(buyerCustomer ? { buyerCustomer } : {}),
+    });
   const tourist = {
     vkn: '',
     title: '',
@@ -521,7 +574,12 @@ describe('validation of the buyer of an export or a tax-free sale', () => {
     address: { city: 'İstanbul', country: 'Türkiye' },
   };
   const taxFreeInput = (extra: Partial<UblInvoiceInput>) =>
-    withLines(lines, { profileId: 'YOLCUBERABERFATURA', invoiceTypeCode: 'SATIS', ...extra });
+    withLines([taxFreeLine()], {
+      profileId: 'YOLCUBERABERFATURA',
+      invoiceTypeCode: 'ISTISNA',
+      customer: customsAuthority,
+      ...extra,
+    });
 
   it('needs the foreign buyer and its official name on an export', () => {
     expect(paths(exportInput())).toEqual(['buyerCustomer']);
@@ -677,10 +735,7 @@ describe("validation of GİB's schematron input rules", () => {
               taxExemptionReason: 'Demirbaş',
             },
           ],
-          {
-            profileId: 'KAMU',
-            paymentMeans: { code: '42', financialAccount: { iban: 'TR330006100519786457841326' } },
-          },
+          kamu,
         ),
       ),
     ).toEqual(['lines[0].taxExemptionReasonCode']);
@@ -690,16 +745,19 @@ describe("validation of GİB's schematron input rules", () => {
     expect(paths(withLines(lines, { paymentMeans: { code: '99' } }))).toEqual([
       'paymentMeans.code',
     ]);
+    expect(paths(withLines(lines, kamu))).toEqual([]);
     expect(paths(withLines(lines, { profileId: 'KAMU' }))).toEqual([
       'paymentMeans.financialAccount.iban',
+      'paymentMeans.financialAccount.currencyCode',
+      'buyerCustomer.vkn',
     ]);
     expect(
       paths(
         withLines(lines, {
-          profileId: 'KAMU',
+          ...kamu,
           paymentMeans: {
             code: '42',
-            financialAccount: { iban: 'TR33 0006 1005 1978 6457 8413 26' },
+            financialAccount: { iban: 'TR33 0006 1005 1978 6457 8413 26', currencyCode: 'TRY' },
           },
         }),
       ),
@@ -714,7 +772,11 @@ describe("validation of GİB's schematron input rules", () => {
         }),
       ),
     ).toEqual(['delivery.deliveryTerms', 'delivery.shipment.transportModeCode']);
-    const input = withLines(lines, { profileId: 'IHRACAT', invoiceTypeCode: 'ISTISNA' });
+    const input = withLines([exportLine(false)], {
+      profileId: 'IHRACAT',
+      invoiceTypeCode: 'ISTISNA',
+      customer: customsAuthority,
+    });
     const buyerCustomer = {
       vkn: '',
       title: 'B',
@@ -741,5 +803,71 @@ describe("validation of GİB's schematron input rules", () => {
         lines: input.lines.map((line) => ({ ...line, delivery: gtip })),
       }),
     ).toEqual([]);
+  });
+});
+
+describe("validation of the rules in GİB's guides", () => {
+  it('asks an export for type ISTISNA, the customs authority and exemption 301', () => {
+    expect(paths(withLines([vatLine(1000, 20, 200)], { profileId: 'IHRACAT' }))).toEqual(
+      expect.arrayContaining([
+        'invoiceTypeCode',
+        'customer.vkn',
+        'lines[0].taxExemptionReasonCode',
+      ]),
+    );
+  });
+
+  it('checks medicine and medical device codes', () => {
+    const medicine = (schemeID: string, value: string) =>
+      paths(
+        withLines([{ ...vatLine(1000, 20, 200), additionalItemIds: [{ schemeID, value }] }], {
+          profileId: 'ILAC_TIBBICIHAZ',
+        }),
+      );
+    expect(medicine('ILAC', '(GTIN)8680222690047(BN)0714450(SN)9546433(XD)210909')).toEqual([]);
+    expect(medicine('TIBBICIHAZ', '(UNO)86930123456789(LNO)X9812354(URT)180225')).toEqual([]);
+    expect(medicine('DIGER', '1111111111')).toEqual([]);
+    expect(medicine('ILAC', '8680222690047')).toEqual(['lines[0].additionalItemIds[0].value']);
+    expect(medicine('DIGER', 'x')).toEqual(['lines[0].additionalItemIds[0].value']);
+  });
+
+  it('asks an SGK invoice for its group, provider, file number and period', () => {
+    const sgkInput = (sgk?: UblInvoiceInput['sgk'], extra: Partial<UblInvoiceInput> = {}) =>
+      withLines([vatLine(1000, 20, 200)], {
+        invoiceTypeCode: 'SGK',
+        ...(sgk ? { sgk } : {}),
+        ...extra,
+      });
+    expect(paths(sgkInput())).toEqual(['sgk.group']);
+    expect(paths(sgkInput({ group: 'SAGLIK_ECZ' }))).toEqual([
+      'sgk.providerCode',
+      'sgk.fileNo',
+      'invoicePeriodStart',
+    ]);
+    expect(
+      paths(
+        sgkInput(
+          {
+            group: 'SAGLIK_ECZ',
+            providerCode: '15425689',
+            providerName: 'Deneme Eczanesi',
+            fileNo: '798564',
+          },
+          {
+            invoicePeriodStart: new Date('2026-05-01T00:00:00Z'),
+            invoicePeriodEnd: new Date('2026-05-31T00:00:00Z'),
+          },
+        ),
+      ),
+    ).toEqual([]);
+    expect(paths(sgkInput({ group: 'DIGER' }))).toEqual([]);
+    const input = withLines([vatLine(1000, 20, 200)]);
+    const sgkCustomer = {
+      vkn: '7750409379',
+      title: 'SGK',
+      taxOffice: 'Çankaya',
+      address: { city: 'Ankara', country: 'Türkiye' },
+    };
+    expect(paths({ ...input, customer: sgkCustomer })).toEqual(['invoiceTypeCode']);
   });
 });

@@ -1,5 +1,6 @@
 import { RETURN_INVOICE_TYPE_CODES, WITHHOLDING_INVOICE_TYPE_CODES } from './constants';
-import { checkGibRules } from './gib-rules';
+import { checkGibRules, isInvestmentIncentiveExemption } from './gib-rules';
+import { INVESTMENT_EXEMPTION_CODES } from './gib-codelists';
 import { addIssue, checkAddress, checkTaxId, isBlank } from './validation-helpers';
 import { computeInvoice } from './calc';
 import { UblValidationError } from './errors';
@@ -153,11 +154,27 @@ function checkWithholdingCodes(input: UblInvoiceInput, issues: UblValidationIssu
  * the calculator's own, and withholding data without a tevkifat code. The builder stops on these
  * even with `validate: false`.
  */
+/**
+ * An investment incentive exemption (YATIRIMTESVIK ISTISNA, e-Arşiv YTBISTISNA) waives the VAT of its
+ * 308 and 339 lines (GİB's investment incentive guide, TaxTotal): computed and shown, not charged.
+ */
+function withWaivedVat(input: UblInvoiceInput): UblInvoiceInput {
+  if (!isInvestmentIncentiveExemption(input)) return input;
+  return {
+    ...input,
+    lines: input.lines.map((line) =>
+      INVESTMENT_EXEMPTION_CODES.includes(line.taxExemptionReasonCode?.trim() ?? '')
+        ? { ...line, vatWaived: true }
+        : line,
+    ),
+  };
+}
+
 export function calculateForBuild(
   input: UblInvoiceInput,
   options: UblValidationOptions = {},
 ): { calc: UblCalcResult; issues: UblValidationIssue[] } {
-  const { result: calc, issues } = computeInvoice(input, options);
+  const { result: calc, issues } = computeInvoice(withWaivedVat(input), options);
   checkWithholdingCodes(input, issues);
   return { calc, issues };
 }

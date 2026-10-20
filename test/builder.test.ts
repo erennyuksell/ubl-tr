@@ -493,6 +493,12 @@ describe('buildUblInvoice foreign buyer', () => {
     ...baseInput,
     profileId: 'IHRACAT',
     invoiceTypeCode: 'ISTISNA',
+    customer: {
+      vkn: '1460415308',
+      title: 'Gümrük ve Ticaret Bakanlığı',
+      taxOffice: 'Ulus',
+      address: { city: 'Ankara', country: 'Türkiye' },
+    },
     taxAmount: 0,
     payableAmount: 1000,
     lines: [

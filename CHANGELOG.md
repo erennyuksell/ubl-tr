@@ -2,6 +2,33 @@
 
 All notable changes to this package will be documented in this file.
 
+## 0.7.0
+
+Nothing is refused any more, and the rules GİB keeps in its guides (not in the schematron) are checked
+too: the investment incentive, charging, medicine, İDİS, public invoice and customs guides and SGK's
+technical document, read against their 2025-2026 versions. 24 invoice kinds pass GİB's schema and
+schematron in the tests, the schema checked against GİB's 2026 UBL-TR 1.2.1 package.
+
+### Added
+
+- Investment incentive exemption (YATIRIMTESVIK `ISTISNA`, e-Arşiv `YTBISTISNA`): the VAT of a 308 or
+  339 line is waived (vazgeçilen KDV), as GİB's guide V1.2 and sample `YTB_Istisna_Efatura.xml` write it:
+  computed and shown in the subtotal with `CalculationSequenceNumeric` -1, TaxTotal 0, not in the payable
+  amount. `calculateInvoice` takes `vatWaived` on a line and reports `waivedTaxAmount`.
+- SGK invoices: `sgk` (group as `AccountingCost`, provider code and name, file number as additional
+  document references), `SGK_INVOICE_GROUPS`; `additionalDocumentReferences[].documentTypeCode`.
+- Guide rules: KWH on charging lines; medicine (`(GTIN)…(BN)…(SN)…(XD)…`) and medical device
+  (`(UNO)…(LNO)…[(SNO)…](URT)…`) codes, `DIGER` as `1111111111`; a KAMU invoice's account currency and
+  spending unit VKN (`buyerCustomer`); an export or a tax-free sale is an ISTISNA to the customs authority,
+  export lines with no VAT and exemption 301, tax-free lines with exemption 501; an invoice to SGK
+  (`7750409379`) is of type SGK or TEVKIFAT, with its group, provider, file number and period.
+
+### Changed
+
+- `UNSUPPORTED_PROFILE_IDS` and `UNSUPPORTED_INVOICE_TYPE_CODES` are empty and deprecated.
+- Export, tax-free and KAMU invoices that 0.6.0 accepted without the fields above are now refused, as
+  GİB's guides require them.
+
 ## 0.6.0
 
 Every GİB profile and type can be built. 0.5.0 refused HKS, ENERJI (SARJ, SARJANLIK), YATIRIMTESVIK and

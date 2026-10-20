@@ -43,13 +43,23 @@ import type {
 } from './types';
 
 /**
- * Investment incentive exemptions (YATIRIMTESVIK with ISTISNA, e-Arşiv YTBISTISNA): GİB asks for the VAT on
- * the line with CalculationSequenceNumeric -1 and exemption 308 or 339, a VAT that is shown and not charged.
- * How it enters the totals is in GİB's investment incentive guide, which ubl-tr has not been checked
- * against yet, so validation refuses these two pairs rather than build totals GİB may refuse.
+ * Kept for callers of 0.5.0 and 0.6.0: every GİB profile and type is built now, so both lists are empty.
+ * @deprecated
  */
 export const UNSUPPORTED_PROFILE_IDS: readonly string[] = [];
-export const UNSUPPORTED_INVOICE_TYPE_CODES: readonly string[] = ['YTBISTISNA'];
+/** @deprecated See `UNSUPPORTED_PROFILE_IDS`. */
+export const UNSUPPORTED_INVOICE_TYPE_CODES: readonly string[] = [];
+
+/** SGK's invoice groups (cbc:AccountingCost), from SGK's e-Fatura technical document. */
+export const SGK_INVOICE_GROUPS: readonly string[] = [
+  'SAGLIK_ECZ',
+  'SAGLIK_HAS',
+  'SAGLIK_OPT',
+  'SAGLIK_MED',
+  'ABONELIK',
+  'MAL_HIZMET',
+  'DIGER',
+];
 
 /** GİB's VKN for the customs authority, the customer of an export or a tax-free sale. */
 const CUSTOMS_AUTHORITY_VKN = '1460415308';
@@ -109,17 +119,6 @@ function checkProfileAndType(input: UblInvoiceInput, issues: UblValidationIssue[
     'GIB_INVOICE_TYPE_CODES',
     issues,
   );
-  if (
-    UNSUPPORTED_INVOICE_TYPE_CODES.includes(invoiceTypeCode) ||
-    (profileId === 'YATIRIMTESVIK' && invoiceTypeCode === 'ISTISNA')
-  ) {
-    addIssue(
-      issues,
-      'invoiceTypeCode',
-      `An investment incentive exemption (${profileId} ${invoiceTypeCode}) is not supported yet; see UNSUPPORTED_INVOICE_TYPE_CODES.`,
-    );
-    return;
-  }
   const typesOfProfile = PROFILE_INVOICE_TYPE_CODES[profileId];
   const profilesOfType = INVOICE_TYPE_PROFILE_IDS[invoiceTypeCode];
   if (typesOfProfile && !typesOfProfile.includes(invoiceTypeCode)) {
@@ -522,6 +521,19 @@ function checkDelivery(input: UblInvoiceInput, issues: UblValidationIssue[]): vo
 const YYYY_MM_DD = /^\d{4}-\d{2}-\d{2}$/;
 const HH_MM_SS = /^\d{2}:\d{2}:\d{2}$/;
 
+/**
+ * An investment incentive exemption: YATIRIMTESVIK with ISTISNA, or e-Arşiv YTBISTISNA. Its 308 and 339
+ * lines carry a waived VAT (vazgeçilen KDV), shown and not charged.
+ */
+export function isInvestmentIncentiveExemption(
+  input: Pick<UblInvoiceInput, 'profileId' | 'invoiceTypeCode'>,
+): boolean {
+  return (
+    (input.profileId === 'YATIRIMTESVIK' && input.invoiceTypeCode === 'ISTISNA') ||
+    (input.profileId === 'EARSIVFATURA' && input.invoiceTypeCode === 'YTBISTISNA')
+  );
+}
+
 /** A YATIRIMTESVIK invoice, or an e-Arşiv invoice of a YTB* type. */
 function isInvestmentIncentive(input: UblInvoiceInput): boolean {
   return (
@@ -695,8 +707,27 @@ function checkProfileFields(
           'Expense type 01 needs the machine name (modelName), its sequence number (productTraceId) and ID (serialId).',
         );
       }
-      const taxed =
-        (calc.lines[index]?.taxAmount ?? 0) > 0 && (calc.lines[index]?.vatRate ?? 0) > 0;
+      // A waived VAT counts: GİB checks the VAT shown in the subtotal (YatirimTesvikKDVCheck).
+      const shownVat =
+        (calc.lines[index]?.taxAmount ?? 0) + (calc.lines[index]?.waivedTaxAmount ?? 0);
+      const taxed = shownVat > 0 && (calc.lines[index]?.vatRate ?? 0) > 0;
+      if (isInvestmentIncentiveExemption(input)) {
+        // YatirimTesvikItemClassificationCodeIstisna and TaxExemptionReasonCode308/339 checks.
+        const exemption = ({ '01': '308', '02': '339' } as Record<string, string>)[expense];
+        if (!exemption) {
+          addIssue(
+            issues,
+            `${path}.classificationCode`,
+            'An investment incentive exemption line is expense type 01 or 02.',
+          );
+        } else if (line.taxExemptionReasonCode?.trim() !== exemption) {
+          addIssue(
+            issues,
+            `${path}.taxExemptionReasonCode`,
+            `Expense type ${expense} takes exemption ${exemption}.`,
+          );
+        }
+      }
       if (RETURN_INVOICE_TYPE_CODES.includes(type)) {
         if ((expense === '03' || expense === '04') && !((calc.lines[index]?.taxAmount ?? 0) > 0)) {
           addIssue(
@@ -760,6 +791,7 @@ function checkProfileFields(
     );
   });
 
+  checkGuideRules(input, issues);
   if (type === 'TEKNOLOJIDESTEK' && input.customer?.vkn?.trim().length !== 11) {
     addIssue(
       issues,
@@ -822,6 +854,135 @@ function checkProfileFields(
       'additionalDocumentReferences',
       'A SARJ invoice references its ESU report (schemeId ESURaporID, a UUID, and its date).',
     );
+  }
+}
+
+/** ILAC: GTIN, batch, serial and expiry; TIBBICIHAZ: product, lot, optional serial, production date. */
+const MEDICINE_CODE = /^\(GTIN\)[^()]+\(BN\)[^()]+\(SN\)[^()]+\(XD\)\d{6}$/;
+const MEDICAL_DEVICE_CODE = /^\(UNO\)[^()]+\(LNO\)[^()]+(\(SNO\)[^()]+)?\(URT\)\d{6}$/;
+/** GİB's code for an item outside İTS and ÜTS on a medicine invoice. */
+const OTHER_ITEM_CODE = '1111111111';
+/** SGK's VKN (Sosyal Güvenlik Kurumu Başkanlığı, Çankaya). */
+const SGK_VKN = '7750409379';
+
+/**
+ * Rules GİB writes in its guides rather than the schematron: the charging guide (KWH), the medicine and
+ * medical device guide (code formats), the public invoice guide (account currency, spending unit VKN), the
+ * customs guide (an export or a tax-free sale is an ISTISNA to the customs authority with exemption 301 or
+ * 501) and SGK's technical document (invoice group, provider, file number, period).
+ */
+function checkGuideRules(input: UblInvoiceInput, issues: UblValidationIssue[]): void {
+  const { profileId, invoiceTypeCode: type } = input;
+  input.lines.forEach((line, index) => {
+    const path = `lines[${index}]`;
+    if ((type === 'SARJ' || type === 'SARJANLIK') && line.unitCode !== 'KWH') {
+      addIssue(issues, `${path}.unitCode`, 'A charging line is in kilowatt hours (unitCode KWH).');
+    }
+    if (profileId === 'ILAC_TIBBICIHAZ') {
+      line.additionalItemIds?.forEach((id, idIndex) => {
+        const value = id.value?.trim() ?? '';
+        const ok =
+          id.schemeID === 'ILAC'
+            ? MEDICINE_CODE.test(value)
+            : id.schemeID === 'TIBBICIHAZ'
+              ? MEDICAL_DEVICE_CODE.test(value)
+              : id.schemeID === 'DIGER'
+                ? value === OTHER_ITEM_CODE
+                : true;
+        if (!ok) {
+          addIssue(
+            issues,
+            `${path}.additionalItemIds[${idIndex}].value`,
+            id.schemeID === 'DIGER'
+              ? `An item outside İTS and ÜTS is written DIGER ${OTHER_ITEM_CODE}.`
+              : id.schemeID === 'ILAC'
+                ? 'A medicine code is (GTIN)…(BN)…(SN)…(XD)YYMMDD.'
+                : 'A medical device code is (UNO)…(LNO)…[(SNO)…](URT)YYMMDD.',
+          );
+        }
+      });
+    }
+    const exemption = line.taxExemptionReasonCode?.trim();
+    if (profileId === 'IHRACAT' && (exemption !== '301' || line.vatRate !== 0)) {
+      addIssue(
+        issues,
+        `${path}.taxExemptionReasonCode`,
+        'An export line has no VAT and exemption 301 (11/1-a Mal ihracatı).',
+      );
+    }
+    if (profileId === 'YOLCUBERABERFATURA' && exemption !== '501') {
+      addIssue(
+        issues,
+        `${path}.taxExemptionReasonCode`,
+        'A tax-free sale line keeps its VAT with exemption 501.',
+      );
+    }
+  });
+
+  if ((profileId === 'IHRACAT' || profileId === 'YOLCUBERABERFATURA') && type !== 'ISTISNA') {
+    addIssue(issues, 'invoiceTypeCode', `A ${profileId} invoice is of type ISTISNA.`);
+  }
+  if (
+    (profileId === 'IHRACAT' || profileId === 'YOLCUBERABERFATURA') &&
+    input.customer?.vkn?.trim() !== CUSTOMS_AUTHORITY_VKN
+  ) {
+    addIssue(
+      issues,
+      'customer.vkn',
+      `A ${profileId} invoice is addressed to the customs authority (${CUSTOMS_AUTHORITY_VKN}).`,
+    );
+  }
+
+  if (profileId === 'KAMU') {
+    if (isBlank(input.paymentMeans?.financialAccount?.currencyCode)) {
+      addIssue(
+        issues,
+        'paymentMeans.financialAccount.currencyCode',
+        "A KAMU invoice names the account's currency.",
+      );
+    }
+    if (!/^\d{10}$/.test(input.buyerCustomer?.vkn?.trim() ?? '')) {
+      addIssue(
+        issues,
+        'buyerCustomer.vkn',
+        'A KAMU invoice names the paying spending unit (buyerCustomer, 10-digit VKN).',
+      );
+    }
+  }
+
+  if (input.customer?.vkn?.trim() === SGK_VKN && type !== 'SGK' && type !== 'TEVKIFAT') {
+    addIssue(issues, 'invoiceTypeCode', 'An invoice to SGK is of type SGK (or TEVKIFAT).');
+  }
+  if (type === 'SGK') {
+    const sgk = input.sgk;
+    if (!sgk || !SGK_INVOICE_GROUPS.includes(sgk.group)) {
+      addIssue(
+        issues,
+        'sgk.group',
+        `An SGK invoice names its group (${SGK_INVOICE_GROUPS.join(', ')}).`,
+      );
+    } else {
+      const health = sgk.group.startsWith('SAGLIK_');
+      if (health && (isBlank(sgk.providerCode) || isBlank(sgk.providerName))) {
+        addIssue(
+          issues,
+          'sgk.providerCode',
+          "A health invoice to SGK names the provider's SGK code and name.",
+        );
+      }
+      if (
+        (health || sgk.group === 'ABONELIK' || sgk.group === 'MAL_HIZMET') &&
+        isBlank(sgk.fileNo)
+      ) {
+        addIssue(issues, 'sgk.fileNo', `An SGK ${sgk.group} invoice names its file number.`);
+      }
+      if (
+        (health || sgk.group === 'ABONELIK') &&
+        !(input.invoicePeriodStart && input.invoicePeriodEnd)
+      ) {
+        addIssue(issues, 'invoicePeriodStart', `An SGK ${sgk.group} invoice names its period.`);
+      }
+    }
   }
 }
 

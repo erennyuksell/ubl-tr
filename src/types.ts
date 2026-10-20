@@ -59,6 +59,12 @@ export interface UblCalcLine {
   taxExemptionReason?: string;
   /** GİB tevkifat code; the rate comes from `WITHHOLDING_TAX_CODES`. */
   withholdingTaxCode?: string;
+  /**
+   * Waived VAT (vazgeçilen KDV) of an investment incentive exemption: the VAT is computed at `vatRate`
+   * and shown on the invoice (CalculationSequenceNumeric -1), but not charged. The builder sets it on the
+   * 308 and 339 lines of a YATIRIMTESVIK ISTISNA or e-Arşiv YTBISTISNA invoice.
+   */
+  vatWaived?: boolean;
 }
 
 /**
@@ -125,8 +131,10 @@ export interface UblCalcLineResult {
   lineAmount: number;
   vatRate: number;
   taxTypeCode: string;
-  /** VAT before withholding. */
+  /** VAT before withholding: the VAT charged, 0 on a line whose VAT is waived. */
   taxAmount: number;
+  /** The waived VAT (vazgeçilen KDV) of a `vatWaived` line, shown but not charged. */
+  waivedTaxAmount?: number;
   withholdingTaxCode?: string;
   withholdingTaxRate: number;
   withholdingTaxAmount: number;
@@ -138,7 +146,10 @@ export interface UblCalcTaxSubtotal {
   taxExemptionReasonCode?: string;
   taxExemptionReason?: string;
   taxableAmount: number;
+  /** The group's VAT; for a waived group the waived VAT, which is not in TaxTotal/TaxAmount. */
   taxAmount: number;
+  /** The VAT is waived (vazgeçilen KDV): written with CalculationSequenceNumeric -1. */
+  waived?: boolean;
 }
 
 export interface UblCalcWithholdingSubtotal {
@@ -512,9 +523,19 @@ export interface UblInvoiceInput {
     schemeId?: string;
     /** YYYY-MM-DD; GİB's schema requires it. */
     issueDate?: string;
+    /** cbc:DocumentTypeCode, such as SGK's MUKELLEF_KODU. */
+    documentTypeCode?: string;
     documentType?: string;
     documentDescription?: string;
   }>;
+  /**
+   * An invoice to SGK (SGK e-Fatura Teknik Doküman): its group (`SGK_INVOICE_GROUPS`: SAGLIK_ECZ,
+   * SAGLIK_HAS, SAGLIK_OPT, SAGLIK_MED, ABONELIK, MAL_HIZMET, DIGER), written as cbc:AccountingCost, and
+   * the provider's code and name and the file number, written as additional document references. A health
+   * group needs all three and the invoice period; ABONELIK the subscriber number (`fileNo`) and the
+   * period; MAL_HIZMET the expense reference (`fileNo`).
+   */
+  sgk?: { group: string; providerCode?: string; providerName?: string; fileNo?: string };
   /**
    * The investment incentive certificate (yatırım teşvik belgesi) of a YATIRIMTESVIK invoice or an e-Arşiv
    * YTB* invoice: its six-digit number (YTBNO) and date. Written as the only `cac:ContractDocumentReference`.

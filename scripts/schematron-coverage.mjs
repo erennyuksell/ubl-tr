@@ -16,7 +16,6 @@ if (!dir || !/^\d{4}-\d{2}-\d{2}$/.test(packageDate ?? '')) {
 const STATUS_TEXT = {
   package: 'ubl-tr validation',
   builder: 'builder writes it; schematron test',
-  unsupported: 'refused: investment incentive exemption, pending GİB guide',
   signature: 'not ubl-tr: the provider signs',
   envelope: 'not ubl-tr: envelope (zarf)',
   display: 'not ubl-tr: display copy (görüntüleme)',
@@ -89,9 +88,6 @@ const STATUS = {
   DemirbasKDVTaxExemptionCheck: 'package',
   KamuFaturaCheck: 'package',
 };
-// Investment incentive rules: the exemption ones (ISTISNA, CalculationSequenceNumeric) wait for GİB's guide.
-const YATIRIM_TESVIK_EXEMPTION =
-  /^YatirimTesvik(ItemClassificationCodeIstisna|TaxExemptionReasonCode)/;
 const YATIRIM_TESVIK = /^YatirimTesvik/;
 
 /** Document kinds of the schematron patterns other than the invoice. */
@@ -148,11 +144,7 @@ for (const rules of schemaOf('UBL-TR_Common_Schematron.xml').pattern ?? []) {
         const key =
           STATUS[`${id}#${index + 1}`] ??
           STATUS[id] ??
-          (YATIRIM_TESVIK_EXEMPTION.test(id)
-            ? 'unsupported'
-            : YATIRIM_TESVIK.test(id)
-              ? 'package'
-              : undefined);
+          (YATIRIM_TESVIK.test(id) ? 'package' : undefined);
         if (!key) unclassified.push(`${id}#${index + 1}`);
         status = key ? STATUS_TEXT[key] : 'unclassified';
       }
@@ -185,7 +177,6 @@ const out = [
   '| --- | --- |',
   `| ubl-tr validation, before building | ${count('ubl-tr validation')} |`,
   `| Builder always writes it right; the schematron test proves it | ${count('builder')} |`,
-  `| Refused by validation: investment incentive exemption, waiting for GİB's guide | ${count('refused')} |`,
   `| Not ubl-tr (signature, envelope, other documents, display, unused) | ${count('not ubl-tr')} |`,
   `| Total | ${rows.length} |`,
   '',

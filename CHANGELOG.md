@@ -2,6 +2,13 @@
 
 All notable changes to this package will be documented in this file.
 
+## 0.7.1
+
+### Added
+
+- The parser reads each line's item description (`lines[].description`, `cac:Item/cbc:Description`): sellers
+  write references there too, as a claim invoice's YİBF number.
+
 ## 0.7.0
 
 Nothing is refused any more, and the rules GİB keeps in its guides (not in the schematron) are checked

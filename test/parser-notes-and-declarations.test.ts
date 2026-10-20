@@ -109,6 +109,18 @@ describe('InvoiceParser references, payment and line notes', () => {
     expect(parsed.lines[0]?.notes).toEqual(['YİBF NO: 2049012']);
   });
 
+  it('reads the item description, empty when the item has none', () => {
+    const parsed = new InvoiceParser().parse(
+      invoiceWith(`
+      <cac:InvoiceLine><cbc:ID>1</cbc:ID><cac:Item><cbc:Description> 2 NOLU HAKEDİŞ, YİBF NO: 2049012 </cbc:Description><cbc:Name>Yapı denetim hizmeti</cbc:Name></cac:Item></cac:InvoiceLine>
+      <cac:InvoiceLine><cbc:ID>2</cbc:ID><cac:Item><cbc:Name>Diğer</cbc:Name></cac:Item></cac:InvoiceLine>`),
+    );
+    expect(parsed.lines.map((line) => [line.name, line.description])).toEqual([
+      ['Yapı denetim hizmeti', '2 NOLU HAKEDİŞ, YİBF NO: 2049012'],
+      ['Diğer', ''],
+    ]);
+  });
+
   it('gives empty lists when the invoice has none of them', () => {
     const parsed = new InvoiceParser().parse(invoiceWith(''));
     expect(parsed.billingReferences).toEqual([]);

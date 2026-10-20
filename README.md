@@ -593,7 +593,7 @@ It extracts:
 - Supplier/customer name, VKN/TCKN, tax office, address.
 - Monetary totals (line extension, tax exclusive and inclusive, allowance total, payable), tax
   subtotals, and the document withholding total and subtotals.
-- Invoice lines, names, notes (`notes`), quantities, unit codes, prices, amounts, and taxes; each line's allowances and
+- Invoice lines, names, item descriptions (`description`), notes (`notes`), quantities, unit codes, prices, amounts, and taxes; each line's allowances and
   charges (`discount`, `surchargeAmount`, `allowanceCharges`) and its withholding
   (`withholdings`: code, percent, withheld amount, VAT it was taken from).
 

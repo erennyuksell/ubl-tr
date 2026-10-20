@@ -102,6 +102,8 @@ export interface InvoiceExtractedData {
   lines: Array<{
     id: string;
     name: string;
+    /** Item/Description: free text about the item, '' when absent. Sellers write references here too. */
+    description: string;
     /** The line's `cbc:Note` texts, empty ones left out. */
     notes: string[];
     quantity: number;
@@ -364,6 +366,7 @@ export class InvoiceParser {
         return {
           id: safeGetStr(child(line, 'ID')),
           name: safeGetStr(child(item, 'Name')),
+          description: safeGetStr(child(item, 'Description')).trim(),
           notes: noteTexts(child(line, 'Note')),
           quantity: safeGetNum(quantityNode),
           unitCode: safeGetStr(child(quantityNode, '@_unitCode')),

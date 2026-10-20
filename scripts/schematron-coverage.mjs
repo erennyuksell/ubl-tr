@@ -16,7 +16,7 @@ if (!dir || !/^\d{4}-\d{2}-\d{2}$/.test(packageDate ?? '')) {
 const STATUS_TEXT = {
   package: 'ubl-tr validation',
   builder: 'builder writes it; schematron test',
-  unsupported: 'refused: ubl-tr cannot write the fields yet',
+  unsupported: 'refused: investment incentive exemption, pending GİB guide',
   signature: 'not ubl-tr: the provider signs',
   envelope: 'not ubl-tr: envelope (zarf)',
   display: 'not ubl-tr: display copy (görüntüleme)',
@@ -47,28 +47,27 @@ const STATUS = {
   PartyIdentificationSchemeIDCheck: 'package',
   PartyIdentificationTCKNVKNCheck: 'package',
   PartyIdentificationPartyNamePersonCheck: 'package',
-  PartyIdentificationTEKNOLOJIDESTEKCheck: 'unsupported',
+  PartyIdentificationTEKNOLOJIDESTEKCheck: 'package',
   DocumentSenderCheck: 'envelope',
   DocumentReceiverCheck: 'envelope',
   TaxFreeInvoiceCheck: 'package',
-  EnerjiPartyIdentificationPlakaCheck: 'unsupported',
+  EnerjiPartyIdentificationPlakaCheck: 'package',
   GeneralWithholdingTaxTotalCheck: 'package',
   WithholdingTaxTotalCheck: 'package',
   TaxExemptionReasonCodeCheck: 'package',
-  'TaxExemptionReasonCodeCheck#6': 'unsupported',
-  BillingReferenceCheck: 'unsupported',
+  BillingReferenceCheck: 'package',
   IhracatYolcuBeraberCheck: 'package',
   'IhracatYolcuBeraberCheck#1': 'envelope',
   'IhracatYolcuBeraberCheck#2': 'envelope',
   TaxRepresentativePartyCheck: 'package',
-  HKSInvioceCheck: 'unsupported',
+  HKSInvioceCheck: 'package',
   IADEInvioceCheck: 'package',
-  IlacTibbiCihazInvoiceTypeCodeCheck: 'unsupported',
-  YatirimTesvikInvoiceTypeCodeCheck: 'unsupported',
-  IdisInvoiceTypeCodeCheck: 'unsupported',
-  YatirimTesvikContractDocumentReferenceIDCheck: 'unsupported',
-  EnerjiInvoicePeriodCheck: 'unsupported',
-  EnerjiESURaporIDCheck: 'unsupported',
+  IlacTibbiCihazInvoiceTypeCodeCheck: 'package',
+  YatirimTesvikInvoiceTypeCodeCheck: 'package',
+  IdisInvoiceTypeCodeCheck: 'package',
+  YatirimTesvikContractDocumentReferenceIDCheck: 'package',
+  EnerjiInvoicePeriodCheck: 'package',
+  EnerjiESURaporIDCheck: 'package',
   TaxFreeNationalityIDCheck: 'package',
   PassportIDCheck: 'package',
   TaxTypeCheck: 'package',
@@ -81,15 +80,18 @@ const STATUS = {
   LineDeliveryCheck: 'package',
   PartyVDCheck: 'package',
   OfficelTitleCheck: 'package',
-  IdisSevkiyatNoCheck: 'unsupported',
-  IdisEtiketNoCheck: 'unsupported',
-  IlacTibbiCihazAdditionalItemIdentificationCheck: 'unsupported',
-  TeknolojiDestekAdditionalItemIdentificationCheck: 'unsupported',
-  IhracKayitliPartyIdentificationIDTypeCheck: 'unsupported',
-  EnerjiItemInstanceSerialIDCheck: 'unsupported',
+  IdisSevkiyatNoCheck: 'package',
+  IdisEtiketNoCheck: 'package',
+  IlacTibbiCihazAdditionalItemIdentificationCheck: 'package',
+  TeknolojiDestekAdditionalItemIdentificationCheck: 'package',
+  IhracKayitliPartyIdentificationIDTypeCheck: 'package',
+  EnerjiItemInstanceSerialIDCheck: 'package',
   DemirbasKDVTaxExemptionCheck: 'package',
   KamuFaturaCheck: 'package',
 };
+// Investment incentive rules: the exemption ones (ISTISNA, CalculationSequenceNumeric) wait for GİB's guide.
+const YATIRIM_TESVIK_EXEMPTION =
+  /^YatirimTesvik(ItemClassificationCodeIstisna|TaxExemptionReasonCode)/;
 const YATIRIM_TESVIK = /^YatirimTesvik/;
 
 /** Document kinds of the schematron patterns other than the invoice. */
@@ -146,7 +148,11 @@ for (const rules of schemaOf('UBL-TR_Common_Schematron.xml').pattern ?? []) {
         const key =
           STATUS[`${id}#${index + 1}`] ??
           STATUS[id] ??
-          (YATIRIM_TESVIK.test(id) ? 'unsupported' : undefined);
+          (YATIRIM_TESVIK_EXEMPTION.test(id)
+            ? 'unsupported'
+            : YATIRIM_TESVIK.test(id)
+              ? 'package'
+              : undefined);
         if (!key) unclassified.push(`${id}#${index + 1}`);
         status = key ? STATUS_TEXT[key] : 'unclassified';
       }
@@ -179,7 +185,7 @@ const out = [
   '| --- | --- |',
   `| ubl-tr validation, before building | ${count('ubl-tr validation')} |`,
   `| Builder always writes it right; the schematron test proves it | ${count('builder')} |`,
-  `| Refused by validation: needs fields ubl-tr cannot write yet | ${count('refused')} |`,
+  `| Refused by validation: investment incentive exemption, waiting for GİB's guide | ${count('refused')} |`,
   `| Not ubl-tr (signature, envelope, other documents, display, unused) | ${count('not ubl-tr')} |`,
   `| Total | ${rows.length} |`,
   '',

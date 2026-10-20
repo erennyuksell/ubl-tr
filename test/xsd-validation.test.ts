@@ -6,9 +6,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { buildUblInvoiceXml } from '../src';
 import { VARIANTS } from './fixtures/invoice-variants';
 
-// Checks the XML against GİB's own UBL-TR 1.2.1 schema. The schema is not shipped with the package: point
-// UBL_TR_XSD at `xsdrt/maindoc/UBL-Invoice-2.1.xsd` of GİB's UBL-TR package to run it (xmllint is needed too).
-const SCHEMA = process.env.UBL_TR_XSD ?? '';
+// Checks the XML against GİB's own UBL-TR 1.2.1 schema (a copy in test/gib, or UBL_TR_XSD) with xmllint.
+// Without xmllint the test is skipped locally; on CI (CI set) it fails, so CI never passes without it.
+const SCHEMA =
+  process.env.UBL_TR_XSD ??
+  path.join(__dirname, 'gib', 'ubl-tr-1.2.1', 'xsdrt', 'maindoc', 'UBL-Invoice-2.1.xsd');
 const HAS_XMLLINT = (() => {
   try {
     execFileSync('xmllint', ['--version'], { stdio: 'ignore' });
@@ -17,7 +19,9 @@ const HAS_XMLLINT = (() => {
     return false;
   }
 })();
-const CAN_RUN = HAS_XMLLINT && SCHEMA !== '' && existsSync(SCHEMA);
+const CAN_RUN = HAS_XMLLINT && existsSync(SCHEMA);
+if (process.env.CI && !CAN_RUN)
+  throw new Error(`GİB schema test cannot run on CI: xmllint or ${SCHEMA} missing.`);
 
 const workDir = CAN_RUN ? mkdtempSync(path.join(tmpdir(), 'ubl-tr-xsd-')) : '';
 afterAll(() => {

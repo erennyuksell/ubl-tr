@@ -476,10 +476,10 @@ It checks the input rules of GİB's e-Fatura schematron (package of 2026-08-21, 
 - A `KAMU` invoice is paid to a Turkish IBAN written without spaces.
 - An export line has its delivery terms, delivery address and transport mode (on the line or the
   invoice) and its GTİP number.
-- Profiles and types whose GİB fields ubl-tr cannot write yet are refused
-  (`UNSUPPORTED_PROFILE_IDS`: `HKS`, `ENERJI`, `YATIRIMTESVIK`, `IDIS`, `ILAC_TIBBICIHAZ`;
-  `UNSUPPORTED_INVOICE_TYPE_CODES`: `SARJ`, `SARJANLIK`, `TEKNOLOJIDESTEK`, `YTB*`; and exemption
-  702 on `IHRACKAYITLI`), so no invoice GİB would refuse is built.
+- What each special profile and type needs (see "Special profiles and types").
+- An investment incentive exemption (`YATIRIMTESVIK` with `ISTISNA`, e-Arşiv `YTBISTISNA`) is refused
+  for now: GİB shows its VAT with `CalculationSequenceNumeric` -1, and how that VAT enters the totals
+  is in GİB's investment incentive guide, which ubl-tr has not been checked against yet.
 - The profile and the invoice type, as GİB's e-Fatura schematron pairs them
   (`INVOICE_TYPE_PROFILE_IDS`, `PROFILE_INVOICE_TYPE_CODES`): an `IADE` only under `TEMELFATURA`,
   `EARSIVFATURA`, `ILAC_TIBBICIHAZ`, `YATIRIMTESVIK`, `IDIS` or `KAMU` (so a return of a
@@ -803,7 +803,21 @@ const exportInvoice = {
 };
 ```
 
-Other export rules (GTİP, delivery terms, transport mode on the lines) are not checked yet.
+An export line also needs its delivery terms, delivery address and transport mode (on the line or
+on the invoice) and its GTİP (`delivery.shipment.goodsItems[0].requiredCustomsId`).
+
+#### Special profiles and types
+
+| Profile or type                           | What it needs                                                                                                                                                                                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HKS`                                     | every line a 19-character künye number: `additionalItemIds: [{ schemeID: 'KUNYENO', value }]`                                                                                                                                                                    |
+| `ILAC_TIBBICIHAZ`                         | every line an `ILAC`, `TIBBICIHAZ` or `DIGER` item code in `additionalItemIds`                                                                                                                                                                                   |
+| `TEKNOLOJIDESTEK` (e-Arşiv)               | a TCKN customer; every line a `TELEFON` or `TABLET_PC` identification (IMEI)                                                                                                                                                                                     |
+| `IDIS`                                    | the supplier's `SEVKIYATNO` (`SE-0000000`) in `additionalIds`; every line an `ETIKETNO` (two letters, seven digits)                                                                                                                                              |
+| `SARJ`, `SARJANLIK` (`ENERJI` or e-Arşiv) | one `PLAKA` in the customer's `additionalIds`; `invoicePeriodStart`/`End` with `invoicePeriodStartTime`/`EndTime`; `SARJ` an ESU report (`additionalDocumentReferences` with `schemeId: 'ESURaporID'`); `SARJANLIK` the charger serial (`itemInstance.serialId`) |
+| `YATIRIMTESVIK`, e-Arşiv `YTB*`           | `investmentIncentive` (six-digit YTBNO and date); every line its expense type (`classificationCode` 01-04) and VAT; expense type 01 the machine (`modelName`, `itemInstance.productTraceId`, `itemInstance.serialId`)                                            |
+| `IHRACKAYITLI` with 702                   | every line its 12-digit GTİP and the buyer's customs line code: a `customsDeclarations` issuer with `ALICIDIBSATIRKOD`                                                                                                                                           |
+| ÖKC receipt (e-Arşiv)                     | `okcReceipts`: number, date, description (`DOCUMENT_DESCRIPTIONS`), URI and the register (`issuer.endpointId`)                                                                                                                                                   |
 
 ### `UblAddress`
 
@@ -1078,30 +1092,25 @@ npm test
 npm run build
 ```
 
-`test/xsd-validation.test.ts` checks the built XML of several invoice kinds (sale, withholding, a
-return of two invoices, exemption, IBAN payment, foreign currency, e-Arşiv) against GİB's UBL-TR
-1.2.1 schema with `xmllint`. The schema is not shipped; the test is skipped unless `UBL_TR_XSD`
-points at `xsdrt/maindoc/UBL-Invoice-2.1.xsd` of GİB's UBL-TR package:
-
-```bash
-UBL_TR_XSD=/path/to/UBL-TR-1.2.1-Paketi/xsdrt/maindoc/UBL-Invoice-2.1.xsd npm test
-```
-
-`test/schematron.test.ts` runs GİB's whole e-Fatura schematron (all 299 rules) on the same invoices,
-with Saxon-HE and SchXslt (Java needed). Fetch the tools once, then point `UBL_TR_SCHEMATRON` at the
-`schematron` folder of GİB's e-Fatura package:
+Two tests check the built XML of one invoice of each kind ubl-tr builds (`test/fixtures/invoice-variants.ts`)
+against GİB's own files, kept in `test/gib` (not in the npm package): `test/xsd-validation.test.ts` against
+the UBL-TR 1.2.1 schema with `xmllint`, and `test/schematron.test.ts` against GİB's whole e-Fatura
+schematron (all 299 rules) with Saxon-HE and SchXslt (Java needed). Fetch the schematron tools once:
 
 ```bash
 ./scripts/fetch-schematron-tools.sh
-UBL_TR_SCHEMATRON=/path/to/e-FaturaPaketi/schematron npm test
 ```
 
-When GİB publishes a new package, regenerate the code lists and the coverage table, and classify any
-new rule the coverage script reports:
+Without `xmllint`, Java or the tools the two tests are skipped locally; on CI (`CI` set) they fail, and
+both workflows install the tools, so CI never passes without them. `UBL_TR_XSD` and `UBL_TR_SCHEMATRON`
+point the tests at other copies.
+
+When GİB publishes a new package, replace the folder in `test/gib`, regenerate the code lists and the
+coverage table, and classify any new rule the coverage script reports:
 
 ```bash
-node scripts/generate-gib-codelists.mjs /path/to/e-FaturaPaketi/schematron/UBL-TR_Codelist.xml 2026-08-21
-node scripts/schematron-coverage.mjs /path/to/e-FaturaPaketi/schematron 2026-08-21
+node scripts/generate-gib-codelists.mjs test/gib/efatura-schematron/UBL-TR_Codelist.xml 2026-08-21
+node scripts/schematron-coverage.mjs test/gib/efatura-schematron 2026-08-21
 ```
 
 ## Scope And Disclaimer

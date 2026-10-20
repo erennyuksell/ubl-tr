@@ -1,6 +1,6 @@
 {
   "name": "@erennyuksell/ubl-tr",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "TypeScript utilities for building and parsing Turkish UBL-TR e-invoice documents.",
   "type": "module",
   "license": "MIT",

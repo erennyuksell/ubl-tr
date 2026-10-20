@@ -4,3 +4,4 @@ coverage/
 package-lock.json
 src/gib-codelists.ts
 docs/gib-schematron-coverage.md
+test/gib/

@@ -49,6 +49,31 @@ const LISTS = [
   ['TRANSPORT_MODE_CODES', 'TransportModeCodeList', 'Transport mode codes.'],
   ['PACKAGE_TYPE_CODES', 'PackageTypeCodeList', 'Package type codes (cbc:PackagingTypeCode).'],
   [
+    'DOCUMENT_DESCRIPTIONS',
+    'DocumentDescriptionType',
+    'Descriptions of an ÖKC information receipt (OKCBF).',
+  ],
+  [
+    'ADDITIONAL_ITEM_ID_SCHEMES',
+    'AdditionalItemIdentificationIDType',
+    'schemeID values of an item identification.',
+  ],
+  [
+    'INVESTMENT_EXPENSE_TYPES',
+    'YatirimTesvikItemClassificationCodeList',
+    'Expense types (harcama tipi) of an investment incentive line.',
+  ],
+  [
+    'INVESTMENT_EXEMPTION_CODES',
+    'YatirimTesvikTaxExemptionReasonCodeType',
+    'Exemption codes of an investment incentive invoice.',
+  ],
+  [
+    'EARCHIVE_INVESTMENT_TYPE_CODES',
+    'YatirimTesvikEArsivInvoiceTypeCodeList',
+    'Investment incentive types of an e-Arşiv invoice.',
+  ],
+  [
     'WITHHOLDING_TAX_TYPE_CODES',
     'WithholdingTaxType',
     'KDV tevkifat codes (WithholdingTaxTotal TaxTypeCode).',

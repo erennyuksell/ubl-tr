@@ -2,6 +2,38 @@
 
 All notable changes to this package will be documented in this file.
 
+## 0.6.0
+
+Every GİB profile and type can be built. 0.5.0 refused HKS, ENERJI (SARJ, SARJANLIK), YATIRIMTESVIK and
+the e-Arşiv YTB\* types, IDIS, ILAC_TIBBICIHAZ, TEKNOLOJIDESTEK and IHRACKAYITLI with exemption 702; their
+fields are now written and checked as GİB's schematron asks, and an invoice of each passes GİB's schema
+and schematron in the tests. The tests now run on CI too, against copies of GİB's files.
+
+### Added
+
+- Line `additionalItemIds` (`cac:AdditionalItemIdentification`: künye, IMEI, medicine code, label) and
+  `itemInstance` (`ProductTraceID`, `SerialID`).
+- `invoicePeriodStartTime`, `invoicePeriodEndTime`; `additionalDocumentReferences[].schemeId` (ESU report);
+  `investmentIncentive` (YTBNO); `okcReceipts` (ÖKC information receipts); party `endpointId`;
+  `customsDeclarations` on a transport handling unit (the buyer's customs line code).
+- The per-profile rules of GİB's schematron for all of these, and code lists `DOCUMENT_DESCRIPTIONS`,
+  `ADDITIONAL_ITEM_ID_SCHEMES`, `INVESTMENT_EXPENSE_TYPES`, `INVESTMENT_EXEMPTION_CODES`,
+  `EARCHIVE_INVESTMENT_TYPE_CODES`.
+- `test/gib`: GİB's UBL-TR 1.2.1 schema and e-Fatura schematron, so the conformance tests run without
+  setup; CI installs xmllint, Java and the schematron tools, and the tests fail on CI when they cannot run.
+
+### Fixed
+
+- `additionalInfoId` was written as `Item/AdditionalItemProperty`, which GİB's schema refuses; it is now
+  in `Item/ItemInstance`.
+
+### Changed
+
+- A document reference (additional, contract, receipt) needs its date: GİB's schema requires it.
+- Still refused: an investment incentive exemption (`YATIRIMTESVIK` with `ISTISNA`, e-Arşiv
+  `YTBISTISNA`), until its totals are checked against GİB's investment incentive guide.
+  `UNSUPPORTED_PROFILE_IDS` is empty; `UNSUPPORTED_INVOICE_TYPE_CODES` is `YTBISTISNA`.
+
 ## 0.5.0
 
 Validation now follows GİB's whole e-Fatura schematron (package of 2026-08-21), not a few of its rules:

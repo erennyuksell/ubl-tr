@@ -157,6 +157,32 @@ export const PACKAGE_TYPE_CODES: readonly string[] = [
   'ZQ', 'ZR', 'ZS', 'ZT', 'ZU', 'ZV', 'ZW', 'ZX', 'ZY', 'ZZ',
 ];
 
+/** Descriptions of an ÖKC information receipt (OKCBF). GİB's `DocumentDescriptionType`. */
+export const DOCUMENT_DESCRIPTIONS: readonly string[] = [
+  'AVANS', 'YEMEK_FIS', 'E-FATURA', 'E-FATURA_IRSALIYE', 'E-ARSIV', 'E-ARSIV_IRSALIYE', 'FATURA',
+  'OTOPARK', 'FATURA_TAHSILAT', 'FATURA_TAHSILAT_KOMISYONLU',
+];
+
+/** schemeID values of an item identification. GİB's `AdditionalItemIdentificationIDType`. */
+export const ADDITIONAL_ITEM_ID_SCHEMES: readonly string[] = [
+  'KUNYENO', 'ILAC', 'TIBBICIHAZ', 'TELEFON', 'TABLET_PC', 'DIGER',
+];
+
+/** Expense types (harcama tipi) of an investment incentive line. GİB's `YatirimTesvikItemClassificationCodeList`. */
+export const INVESTMENT_EXPENSE_TYPES: readonly string[] = [
+  '01', '02', '03', '04',
+];
+
+/** Exemption codes of an investment incentive invoice. GİB's `YatirimTesvikTaxExemptionReasonCodeType`. */
+export const INVESTMENT_EXEMPTION_CODES: readonly string[] = [
+  '308', '339',
+];
+
+/** Investment incentive types of an e-Arşiv invoice. GİB's `YatirimTesvikEArsivInvoiceTypeCodeList`. */
+export const EARCHIVE_INVESTMENT_TYPE_CODES: readonly string[] = [
+  'YTBSATIS', 'YTBIADE', 'YTBISTISNA', 'YTBTEVKIFAT', 'YTBTEVKIFATIADE',
+];
+
 /** KDV tevkifat codes (WithholdingTaxTotal TaxTypeCode). GİB's `WithholdingTaxType`. */
 export const WITHHOLDING_TAX_TYPE_CODES: readonly string[] = [
   '601', '602', '603', '604', '605', '606', '607', '608', '609', '610', '611', '612', '613', '614',

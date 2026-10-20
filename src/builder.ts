@@ -175,9 +175,12 @@ function identification(value: string, schemeID: string) {
 function buildParty(party: UblParty, partyType?: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
-  // WebsiteURI
+  // WebsiteURI, EndpointID
   if (party.webSiteUri) {
     result.WebsiteURI = party.webSiteUri;
+  }
+  if (party.endpointId) {
+    result.EndpointID = party.endpointId;
   }
 
   // PartyIdentification — primary VKN/TCKN, party type, additional IDs (MERSISNO, TICARETSICILNO, etc.)
@@ -290,6 +293,11 @@ function buildLine(line: UblInvoiceLine, calc: UblCalcLineResult, index: number,
   if (line.manufacturerCode) {
     item.ManufacturersItemIdentification = { ID: line.manufacturerCode };
   }
+  if (line.additionalItemIds?.length) {
+    item.AdditionalItemIdentification = line.additionalItemIds.map((id) =>
+      identification(id.value, id.schemeID),
+    );
+  }
   if (line.originCountry) {
     item.OriginCountry = { Name: line.originCountry };
   }
@@ -305,12 +313,17 @@ function buildLine(line: UblInvoiceLine, calc: UblCalcLineResult, index: number,
     };
   }
 
-  // AdditionalItemProperty — extra info beyond standard BrandName/ModelName
-  const additionalProps: Array<{ Name: string; Value: string }> = [];
-  if (line.additionalInfoId)
-    additionalProps.push({ Name: 'EkBilgiID', Value: line.additionalInfoId });
-  if (additionalProps.length > 0) {
-    item.AdditionalItemProperty = additionalProps;
+  // ItemInstance (ItemInstanceType order: ProductTraceID, SerialID, AdditionalItemProperty). The extra
+  // info property lives here: ItemType itself has no AdditionalItemProperty.
+  const instance = line.itemInstance;
+  if (instance?.productTraceId || instance?.serialId || line.additionalInfoId) {
+    item.ItemInstance = {
+      ...(instance?.productTraceId ? { ProductTraceID: instance.productTraceId } : {}),
+      ...(instance?.serialId ? { SerialID: instance.serialId } : {}),
+      ...(line.additionalInfoId
+        ? { AdditionalItemProperty: [{ Name: 'EkBilgiID', Value: line.additionalInfoId }] }
+        : {}),
+    };
   }
 
   // ── AllowanceCharge: line discount, line surcharge, then document shares ──
@@ -569,6 +582,12 @@ function buildDelivery(delivery: UblDelivery) {
               ...(thu.actualPackageType ? { PackagingTypeCode: thu.actualPackageType } : {}),
             };
           }
+          if (thu.customsDeclarations?.length) {
+            unit.CustomsDeclaration = thu.customsDeclarations.map((declaration) => ({
+              ID: declaration.id,
+              ...(declaration.issuer ? { IssuerParty: buildParty(declaration.issuer) } : {}),
+            }));
+          }
           return unit;
         },
       );
@@ -658,6 +677,34 @@ export function buildUblInvoice(
   const withholdingTaxTotal = buildWithholdingTaxTotal(calc, input.lines, currency);
 
   // Merge notes[] + description + amount-in-words into Note array
+  // DocumentReferenceType order: ID, IssueDate, DocumentTypeCode, DocumentType, DocumentDescription,
+  // Attachment, ValidityPeriod, IssuerParty. An ÖKC receipt's validity starts on its issue date.
+  const billingReferences = [
+    ...(RETURN_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode)
+      ? returnReferences(input).map((reference) => ({
+          InvoiceDocumentReference: {
+            ID: reference.invoiceNo,
+            IssueDate: reference.issueDate
+              ? formatDate(new Date(reference.issueDate))
+              : formatDate(input.issueDate),
+            DocumentTypeCode: 'IADE',
+          },
+        }))
+      : []),
+    ...(input.okcReceipts ?? []).map((receipt) => ({
+      AdditionalDocumentReference: {
+        ID: receipt.id,
+        IssueDate: receipt.issueDate,
+        DocumentTypeCode: 'OKCBF',
+        DocumentType: 'OKCBilgiFisi',
+        DocumentDescription: receipt.description,
+        Attachment: { ExternalReference: { URI: receipt.uri } },
+        ValidityPeriod: { StartDate: receipt.issueDate },
+        IssuerParty: buildParty(receipt.issuer),
+      },
+    })),
+  ];
+
   const allNotes: string[] = [];
   if (input.notes?.length) allNotes.push(...input.notes);
   if (input.description && !allNotes.includes(input.description)) allNotes.push(input.description);
@@ -700,9 +747,12 @@ export function buildUblInvoice(
     // ── Invoice Period ───────────────────────────────
     ...(input.invoicePeriodStart && input.invoicePeriodEnd
       ? {
+          // PeriodType order: StartDate, StartTime, EndDate, EndTime.
           InvoicePeriod: {
             StartDate: formatDate(input.invoicePeriodStart),
+            ...(input.invoicePeriodStartTime ? { StartTime: input.invoicePeriodStartTime } : {}),
             EndDate: formatDate(input.invoicePeriodEnd),
+            ...(input.invoicePeriodEndTime ? { EndTime: input.invoicePeriodEndTime } : {}),
           },
         }
       : {}),
@@ -719,21 +769,8 @@ export function buildUblInvoice(
         }
       : {}),
 
-    // ── Billing Reference (XSD #29 — IADE → orijinal fatura) ──
-    ...(RETURN_INVOICE_TYPE_CODES.includes(input.invoiceTypeCode) && returnReferences(input).length
-      ? {
-          // DocumentReference order (XSD): ID, IssueDate, DocumentTypeCode.
-          BillingReference: returnReferences(input).map((reference) => ({
-            InvoiceDocumentReference: {
-              ID: reference.invoiceNo,
-              IssueDate: reference.issueDate
-                ? formatDate(new Date(reference.issueDate))
-                : formatDate(input.issueDate),
-              DocumentTypeCode: 'IADE',
-            },
-          })),
-        }
-      : {}),
+    // ── Billing Reference (XSD #29): the returned invoices, then the ÖKC receipts ──
+    ...(billingReferences.length ? { BillingReference: billingReferences } : {}),
 
     // ── Despatch Document Reference (XSD #30) ────────────
     ...(input.despatchDocumentNo
@@ -759,21 +796,28 @@ export function buildUblInvoice(
         }
       : {}),
 
-    // ── Contract Document Reference (XSD #33) ────────────
-    ...(input.contractDocumentNo
+    // ── Contract Document Reference (XSD #33); an investment incentive is the only one (YTBNO) ──
+    ...(input.investmentIncentive
       ? {
           ContractDocumentReference: {
-            ID: input.contractDocumentNo,
-            ...(input.contractDocumentDate ? { IssueDate: input.contractDocumentDate } : {}),
+            ID: { $value: input.investmentIncentive.no, $attributes: { schemeID: 'YTBNO' } },
+            IssueDate: input.investmentIncentive.issueDate,
           },
         }
-      : {}),
+      : input.contractDocumentNo
+        ? {
+            ContractDocumentReference: {
+              ID: input.contractDocumentNo,
+              ...(input.contractDocumentDate ? { IssueDate: input.contractDocumentDate } : {}),
+            },
+          }
+        : {}),
 
     // ── Additional Document Reference (XSD #34) ──────────
     ...(input.additionalDocumentReferences?.length
       ? {
           AdditionalDocumentReference: input.additionalDocumentReferences.map((ref) => ({
-            ID: ref.id,
+            ID: ref.schemeId ? { $value: ref.id, $attributes: { schemeID: ref.schemeId } } : ref.id,
             ...(ref.issueDate ? { IssueDate: ref.issueDate } : {}),
             ...(ref.documentType ? { DocumentType: ref.documentType } : {}),
             ...(ref.documentDescription ? { DocumentDescription: ref.documentDescription } : {}),

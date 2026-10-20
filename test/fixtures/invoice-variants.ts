@@ -192,4 +192,164 @@ export const VARIANTS: Array<[string, UblInvoiceInput]> = [
       },
     }),
   ],
+  [
+    'HKS sale with künye numbers',
+    base({
+      profileId: 'HKS',
+      lines: [
+        line({
+          name: 'Elma',
+          additionalItemIds: [
+            { schemeID: 'KUNYENO', value: '1231231231231231123' },
+            { schemeID: 'MALSAHIBIADSOYADUNVAN', value: 'Mal Sahibi' },
+          ],
+        }),
+      ],
+    }),
+  ],
+  [
+    'charging (SARJ) with plate, period and ESU report',
+    base({
+      profileId: 'ENERJI',
+      invoiceTypeCode: 'SARJ',
+      customer: { ...customer, additionalIds: [{ schemeID: 'PLAKA', value: '06GIB06' }] },
+      invoicePeriodStart: new Date('2026-05-21T00:00:00Z'),
+      invoicePeriodStartTime: '00:00:00',
+      invoicePeriodEnd: new Date('2026-05-27T00:00:00Z'),
+      invoicePeriodEndTime: '23:59:59',
+      additionalDocumentReferences: [
+        {
+          id: 'B0E502A8-122C-4061-BE02-8133A5788177',
+          schemeId: 'ESURaporID',
+          issueDate: '2026-05-21',
+        },
+      ],
+      lines: [line({ name: 'AC' })],
+    }),
+  ],
+  [
+    'charging session (SARJANLIK) with charger serial',
+    base({
+      profileId: 'ENERJI',
+      invoiceTypeCode: 'SARJANLIK',
+      customer: { ...customer, additionalIds: [{ schemeID: 'PLAKA', value: '06GIB06' }] },
+      invoicePeriodStart: new Date('2026-05-28T00:00:00Z'),
+      invoicePeriodStartTime: '06:00:00',
+      invoicePeriodEnd: new Date('2026-05-28T00:00:00Z'),
+      invoicePeriodEndTime: '07:30:00',
+      lines: [line({ name: 'DC', itemInstance: { serialId: '45225' } })],
+    }),
+  ],
+  [
+    'technology support (TEKNOLOJIDESTEK) phone',
+    base({
+      profileId: 'EARSIVFATURA',
+      invoiceTypeCode: 'TEKNOLOJIDESTEK',
+      customer: {
+        ...customer,
+        vkn: '11111111110',
+        title: 'Öğrenci Adı',
+        person: { firstName: 'Öğrenci', familyName: 'Adı' },
+      },
+      eArchiveInfo: { deliveryType: 'Electronic' },
+      lines: [
+        line({
+          name: 'Telefon',
+          additionalItemIds: [{ schemeID: 'TELEFON', value: '(IMEI)542420896351314' }],
+        }),
+      ],
+    }),
+  ],
+  [
+    'IDIS with shipment and label numbers',
+    base({
+      profileId: 'IDIS',
+      supplier: { ...supplier, additionalIds: [{ schemeID: 'SEVKIYATNO', value: 'SE-1234567' }] },
+      lines: [line({ additionalItemIds: [{ schemeID: 'ETIKETNO', value: 'AB1234567' }] })],
+    }),
+  ],
+  [
+    'medicine (ILAC_TIBBICIHAZ) with its code',
+    base({
+      profileId: 'ILAC_TIBBICIHAZ',
+      lines: [
+        line({ name: 'İlaç', additionalItemIds: [{ schemeID: 'ILAC', value: '8699999999999' }] }),
+      ],
+    }),
+  ],
+  [
+    'investment incentive machine (YATIRIMTESVIK, expense type 01)',
+    base({
+      profileId: 'YATIRIMTESVIK',
+      investmentIncentive: { no: '123456', issueDate: '2026-01-15' },
+      lines: [
+        line({
+          name: 'CNC tezgâhı',
+          classificationCode: '01',
+          modelName: 'CNC-500',
+          itemInstance: { productTraceId: '1', serialId: 'MK-0001' },
+        }),
+      ],
+    }),
+  ],
+  [
+    'e-Arşiv investment incentive sale (YTBSATIS)',
+    base({
+      profileId: 'EARSIVFATURA',
+      invoiceTypeCode: 'YTBSATIS',
+      eArchiveInfo: { deliveryType: 'Electronic' },
+      investmentIncentive: { no: '654321', issueDate: '2026-02-01' },
+      lines: [line({ classificationCode: '03' })],
+    }),
+  ],
+  [
+    'e-Arşiv invoice for an ÖKC receipt',
+    base({
+      profileId: 'EARSIVFATURA',
+      eArchiveInfo: { deliveryType: 'Electronic' },
+      okcReceipts: [
+        {
+          id: '0001',
+          issueDate: '2026-05-25',
+          description: 'FATURA',
+          uri: 'https://ornek.com.tr/fis/0001',
+          issuer: { ...supplier, endpointId: 'AB12345678' },
+        },
+      ],
+    }),
+  ],
+  [
+    'registered export (IHRACKAYITLI, 702) with GTİP and customs line code',
+    base({
+      invoiceTypeCode: 'IHRACKAYITLI',
+      lines: [
+        line({
+          vatRate: 0,
+          taxAmount: 0,
+          taxExemptionReasonCode: '702',
+          taxExemptionReason: 'İhraç kaydıyla teslim',
+          delivery: {
+            shipment: {
+              goodsItems: [{ requiredCustomsId: '847130000000' }],
+              transportHandlingUnits: [
+                {
+                  customsDeclarations: [
+                    {
+                      id: '1',
+                      issuer: {
+                        vkn: '',
+                        title: '',
+                        address,
+                        additionalIds: [{ schemeID: 'ALICIDIBSATIRKOD', value: '12345678901' }],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        }),
+      ],
+    }),
+  ],
 ];

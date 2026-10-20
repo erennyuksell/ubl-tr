@@ -14,11 +14,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildUblInvoiceXml } from '../src';
 import { VARIANTS } from './fixtures/invoice-variants';
 
-// Runs GİB's own e-Fatura schematron (all of its rules) on one invoice of each kind ubl-tr builds. Neither
-// the schematron nor the tools ship with the package: run scripts/fetch-schematron-tools.sh once (Saxon-HE
-// and SchXslt from Maven Central, Java needed) and point UBL_TR_SCHEMATRON at the `schematron` folder of
-// GİB's e-Fatura package. An e-Arşiv invoice is checked with the schematron's `type` set to `earchive`.
-const SCHEMATRON_DIR = process.env.UBL_TR_SCHEMATRON ?? '';
+// Runs GİB's own e-Fatura schematron (all of its rules; a copy in test/gib, or UBL_TR_SCHEMATRON) on one
+// invoice of each kind ubl-tr builds, with Saxon-HE and SchXslt: run scripts/fetch-schematron-tools.sh once
+// (Java needed). Without the tools the test is skipped locally; on CI (CI set) it fails. An e-Arşiv invoice
+// is checked with the schematron's `type` set to `earchive`.
+const SCHEMATRON_DIR =
+  process.env.UBL_TR_SCHEMATRON ?? path.join(__dirname, 'gib', 'efatura-schematron');
 const TOOLS = path.join(__dirname, '..', '.cache', 'schematron-tools');
 const CLASSPATH = ['Saxon-HE-12.5.jar', 'xmlresolver-5.2.2.jar'].map((jar) =>
   path.join(TOOLS, jar),
@@ -36,9 +37,13 @@ const HAS_JAVA = (() => {
 })();
 const CAN_RUN =
   HAS_JAVA &&
-  SCHEMATRON_DIR !== '' &&
   existsSync(path.join(SCHEMATRON_DIR, MAIN)) &&
   [...CLASSPATH, PIPELINE].every((file) => existsSync(file));
+if (process.env.CI && !CAN_RUN) {
+  throw new Error(
+    'GİB schematron test cannot run on CI: Java or scripts/fetch-schematron-tools.sh missing.',
+  );
+}
 
 function saxon(args: string[]): void {
   execFileSync('java', ['-cp', CLASSPATH.join(path.delimiter), 'net.sf.saxon.Transform', ...args], {

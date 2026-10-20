@@ -218,6 +218,17 @@ export interface UblInvoiceLine extends UblCalcLine {
   // ─── Extra ───
   note?: string;
   additionalInfoId?: string;
+  /**
+   * Item identifications GİB's profiles ask for (`cac:AdditionalItemIdentification`): `KUNYENO` (HKS, 19
+   * characters), `ILAC` / `TIBBICIHAZ` / `DIGER` (ILAC_TIBBICIHAZ), `TELEFON` / `TABLET_PC` (TEKNOLOJIDESTEK,
+   * the IMEI or serial), `ETIKETNO` (IDIS, two letters and seven digits).
+   */
+  additionalItemIds?: UblPartyIdentification[];
+  /**
+   * The item's instance (`cac:ItemInstance`): `serialId` is the charger serial of a SARJANLIK line and the
+   * machine serial of an investment incentive line (expense type 01, with `productTraceId` and `modelName`).
+   */
+  itemInstance?: { productTraceId?: string; serialId?: string };
 }
 
 /**
@@ -298,6 +309,8 @@ export interface UblParty {
   taxOffice?: string;
   address?: UblAddress;
   webSiteUri?: string;
+  /** cbc:EndpointID, such as the number of the cash register (ÖKC) a receipt came from. */
+  endpointId?: string;
   contact?: UblContact;
   person?: UblPerson; // TCKN kişiler için
   legalEntity?: UblLegalEntity;
@@ -363,6 +376,11 @@ export interface UblTransportHandlingUnit {
   actualPackageId?: string;
   actualPackageQuantity?: number;
   actualPackageType?: string; // Package type code (e.g., BX=Box, CT=Carton)
+  /**
+   * Customs declarations (`cac:CustomsDeclaration`). An IHRACKAYITLI line with exemption 702 names the
+   * buyer's customs line code here: an issuer whose `additionalIds` hold `ALICIDIBSATIRKOD` (11 characters).
+   */
+  customsDeclarations?: Array<{ id: string; issuer?: UblParty }>;
 }
 
 /**
@@ -461,6 +479,9 @@ export interface UblInvoiceInput {
   dueDate?: Date;
   invoicePeriodStart?: Date;
   invoicePeriodEnd?: Date;
+  /** Start and end time of the period (HH:mm:ss); a SARJ or SARJANLIK invoice needs both. */
+  invoicePeriodStartTime?: string;
+  invoicePeriodEndTime?: string;
 
   // ── Payment ──────────────────────────────────────
   paymentMeansCode?: string; // Eski uyumluluk
@@ -487,9 +508,30 @@ export interface UblInvoiceInput {
   billingReferences?: UblBillingReference[];
   additionalDocumentReferences?: Array<{
     id: string;
+    /** schemeID of the ID, such as `ESURaporID` for the ESU report of a SARJ invoice. */
+    schemeId?: string;
+    /** YYYY-MM-DD; GİB's schema requires it. */
     issueDate?: string;
     documentType?: string;
     documentDescription?: string;
+  }>;
+  /**
+   * The investment incentive certificate (yatırım teşvik belgesi) of a YATIRIMTESVIK invoice or an e-Arşiv
+   * YTB* invoice: its six-digit number (YTBNO) and date. Written as the only `cac:ContractDocumentReference`.
+   */
+  investmentIncentive?: { no: string; issueDate: string };
+  /**
+   * ÖKC information receipts (ÖKC bilgi fişi) the invoice is issued for, each a `cac:BillingReference`
+   * with DocumentTypeCode OKCBF. `description` is from GİB's list (`DOCUMENT_DESCRIPTIONS`: AVANS,
+   * YEMEK_FIS, E-FATURA, FATURA, OTOPARK, ...); `issuer` is the cash register, its `endpointId` the
+   * register's number.
+   */
+  okcReceipts?: Array<{
+    id: string;
+    issueDate: string;
+    description: string;
+    uri: string;
+    issuer: UblParty;
   }>;
 
   // ── Document-level allowance/charge ──────────────

@@ -448,15 +448,39 @@ describe('validation of the profile and the invoice type', () => {
     expect(paths(input('EARSIVFATURA'))).toEqual([]);
   });
 
-  it('refuses the profiles and types whose GİB fields ubl-tr cannot write yet', () => {
-    for (const profileId of ['HKS', 'ENERJI', 'YATIRIMTESVIK', 'IDIS', 'ILAC_TIBBICIHAZ']) {
-      expect(paths(withLines(lines, { profileId }))).toEqual(['profileId']);
-    }
-    for (const invoiceTypeCode of ['SARJ', 'SARJANLIK', 'TEKNOLOJIDESTEK', 'YTBSATIS']) {
-      expect(paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode }))).toEqual([
-        'invoiceTypeCode',
-      ]);
-    }
+  it('asks each special profile for the identifications GİB requires', () => {
+    expect(paths(withLines(lines, { profileId: 'HKS' }))).toEqual(['lines[0].additionalItemIds']);
+    expect(paths(withLines(lines, { profileId: 'ILAC_TIBBICIHAZ' }))).toEqual([
+      'lines[0].additionalItemIds',
+    ]);
+    expect(paths(withLines(lines, { profileId: 'IDIS' }))).toEqual([
+      'lines[0].additionalItemIds',
+      'supplier.additionalIds',
+    ]);
+    expect(paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'SARJ' }))).toEqual(
+      [
+        'customer.additionalIds',
+        'invoicePeriodStart',
+        'invoicePeriodStartTime',
+        'additionalDocumentReferences',
+      ],
+    );
+    expect(
+      paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'TEKNOLOJIDESTEK' })),
+    ).toEqual(['lines[0].additionalItemIds']);
+    expect(paths(withLines(lines, { profileId: 'YATIRIMTESVIK' }))).toEqual([
+      'investmentIncentive',
+      'lines[0].classificationCode',
+    ]);
+  });
+
+  it("refuses an investment incentive exemption until GİB's guide is checked", () => {
+    expect(
+      paths(withLines(lines, { profileId: 'YATIRIMTESVIK', invoiceTypeCode: 'ISTISNA' })),
+    ).toContain('invoiceTypeCode');
+    expect(
+      paths(withLines(lines, { profileId: 'EARSIVFATURA', invoiceTypeCode: 'YTBISTISNA' })),
+    ).toContain('invoiceTypeCode');
   });
 
   it("refuses a profile or a type that is not in GİB's lists", () => {
@@ -613,7 +637,8 @@ describe("validation of GİB's schematron input rules", () => {
     expect(paths(withLines([exempt('801')]))).toEqual(['lines[0].taxExemptionReasonCode']);
     expect(paths(withLines([exempt('701')]))).toEqual(['lines[0].taxExemptionReasonCode']);
     expect(paths(withLines([exempt('702')], { invoiceTypeCode: 'IHRACKAYITLI' }))).toEqual([
-      'lines[0].taxExemptionReasonCode',
+      'lines[0].delivery.shipment.goodsItems[0].requiredCustomsId',
+      'lines[0].delivery.shipment.transportHandlingUnits',
     ]);
   });
 

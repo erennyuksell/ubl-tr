@@ -25,6 +25,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # GİB conformance tests: xmllint for the schema, Java with Saxon-HE and SchXslt for the schematron.
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+
+      - name: Cache schematron tools
+        uses: actions/cache@v4
+        with:
+          path: .cache/schematron-tools
+          key: schematron-tools-${{ hashFiles('scripts/fetch-schematron-tools.sh') }}
+
+      - name: Fetch schematron tools
+        run: ./scripts/fetch-schematron-tools.sh
+
       - name: Typecheck
         run: npm run typecheck
 
